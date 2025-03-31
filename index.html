@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Conqueror - Vibe Jam 2025</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+                "simplex-noise": "https://cdn.jsdelivr.net/npm/simplex-noise@2.4.0/simplex-noise.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="game-container"></div>
+    
+    <!-- UI Elements -->
+    <div id="ui-container">
+        <div id="player-stats">
+            <div id="health-bar">
+                <div class="bar-label">HEALTH</div>
+                <div class="bar-container">
+                    <div class="bar-fill" id="health-fill"></div>
+                </div>
+            </div>
+            <div id="energy-bar">
+                <div class="bar-label">ENERGY</div>
+                <div class="bar-container">
+                    <div class="bar-fill" id="energy-fill"></div>
+                </div>
+            </div>
+            <div id="currency-display">
+                <span id="currency-icon">💰</span>
+                <span id="currency-amount">0</span>
+            </div>
+        </div>
+        
+        <div id="planet-info" class="hidden">
+            <h3 id="planet-name">Planet Name</h3>
+            <p id="planet-status">Status: Unconquered</p>
+            <p id="planet-strength">Defense: <span id="defense-value">0</span></p>
+            <button id="conquer-btn" class="action-btn">CONQUER</button>
+        </div>
+        
+        <div id="character-selection" class="screen">
+            <h2>SELECT YOUR CHARACTER</h2>
+            <div class="character-options">
+                <div class="character-option" data-race="saiyan">
+                    <h3>SAIYAN</h3>
+                    <div class="character-img" id="saiyan-img"></div>
+                    <p>Super strength, energy blasts, and transformation abilities</p>
+                </div>
+                <div class="character-option" data-race="viltrumite">
+                    <h3>VILTRUMITE</h3>
+                    <div class="character-img" id="viltrumite-img"></div>
+                    <p>Incredible durability, flight speed, and laser vision</p>
+                </div>
+            </div>
+            <button id="start-game" class="action-btn">BEGIN CONQUEST</button>
+        </div>
+        
+        <div id="minimap"></div>
+        
+        <div id="game-over-screen" class="screen hidden">
+            <h2>GAME OVER</h2>
+            <p>Sei stato sconfitto!</p>
+            <button id="restart-game" class="action-btn">RESTART</button>
+        </div>
+        
+        <!-- Schermata Potenziamenti -->
+        <div id="upgrades-screen" class="screen hidden">
+            <h2>POTENZIAMENTI</h2>
+            <div class="upgrades-container">
+                <div class="upgrade-item" data-stat="attackPower">
+                    <h4>Potenza Attacco</h4>
+                    <p>Livello: <span class="upgrade-level">0</span> / 10</p>
+                    <p>Costo: <span class="upgrade-cost">100</span> 💰</p>
+                    <button class="upgrade-btn action-btn">POTENZIA</button>
+                </div>
+                <div class="upgrade-item" data-stat="defense">
+                    <h4>Difesa</h4>
+                    <p>Livello: <span class="upgrade-level">0</span> / 10</p>
+                    <p>Costo: <span class="upgrade-cost">100</span> 💰</p>
+                    <button class="upgrade-btn action-btn">POTENZIA</button>
+                </div>
+                <div class="upgrade-item" data-stat="speed">
+                    <h4>Velocità</h4>
+                    <p>Livello: <span class="upgrade-level">0</span> / 10</p>
+                    <p>Costo: <span class="upgrade-cost">100</span> 💰</p>
+                    <button class="upgrade-btn action-btn">POTENZIA</button>
+                </div>
+                <div class="upgrade-item" data-stat="healthCapacity">
+                    <h4>Salute Max</h4>
+                    <p>Livello: <span class="upgrade-level">0</span> / 10</p>
+                    <p>Costo: <span class="upgrade-cost">100</span> 💰</p>
+                    <button class="upgrade-btn action-btn">POTENZIA</button>
+                </div>
+                <div class="upgrade-item" data-stat="energyCapacity">
+                    <h4>Energia Max</h4>
+                    <p>Livello: <span class="upgrade-level">0</span> / 10</p>
+                    <p>Costo: <span class="upgrade-cost">100</span> 💰</p>
+                    <button class="upgrade-btn action-btn">POTENZIA</button>
+                </div>
+            </div>
+            <button id="close-upgrades" class="action-btn">CHIUDI</button>
+        </div>
+
+        <!-- Legend Screen -->
+        <div id="legend-screen" class="screen hidden">
+            <h2>CONTROLS</h2>
+            <ul class="controls-list">
+                <li><strong>W / Arrow Up:</strong> Move Forward</li>
+                <li><strong>S / Arrow Down:</strong> Move Backward</li>
+                <li><strong>A / Arrow Left:</strong> Strafe Left</li>
+                <li><strong>D / Arrow Right:</strong> Strafe Right</li>
+                <li><strong>Mouse:</strong> Look Around</li>
+                <li><strong>Space:</strong> Ascend / Toggle Flight</li>
+                <li><strong>Shift / C:</strong> Descend (while flying)</li>
+                <li><strong>Left Mouse Button:</strong> Primary Attack</li>
+                <li><strong>Right Mouse Button:</strong> Special Attack</li>
+                <li><strong>U:</strong> Open/Close Upgrades</li>
+                <li><strong>H:</strong> Open/Close Controls Legend</li>
+                <li><strong>Esc:</strong> Unlock Mouse / Pause (Implicit)</li>
+            </ul>
+            <button id="close-legend" class="action-btn">CLOSE</button>
+        </div>
+        
+        <div id="controls-hint">
+            <p>WASD - Move | SPACE - Fly | MOUSE - Aim | LMB - Energy Attack | RMB - Laser Attack | U - Upgrades | H - Help</p>
+        </div>
+    </div>
+    
+    <script type="module" src="js/main.js"></script>
+    <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10; border-top-left-radius: 12px; z-index: 10000; border: 1px solid #fff;">🎮 Vibe Jam 2025</a>
+</body>
+</html> 

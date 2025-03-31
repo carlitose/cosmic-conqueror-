@@ -1,0 +1,979 @@
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import * as SimplexNoise from 'simplex-noise';
+import { UniverseGenerator } from './universe.js';
+import { Player } from './player.js';
+import { Enemy } from './enemy.js';
+
+// --- Global Variables ---
+let scene, camera, renderer, controls;
+let player;
+let universeGenerator;
+let planetMeshes = []; // Array per memorizzare le mesh dei pianeti
+let starMeshes = [];   // Array per memorizzare le mesh delle stelle
+let exitPortalGroup, exitPortalBox;
+let returnPortalGroup, returnPortalBox;
+
+let activeEnemies = []; // Array per i nemici attivi
+let targetIndicatorArrow = null; // <-- Nuovo: Freccia indicatore
+
+let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, moveUp = false, moveDown = false;
+let canJump = false;
+let prevTime = performance.now();
+
+let activeProjectiles = []; // Array per gli attacchi attivi
+
+let currentTargetPlanet = null; // Pianeta attualmente nel raggio d'azione
+
+// UI Elements
+const characterSelectionScreen = document.getElementById('character-selection');
+const startGameButton = document.getElementById('start-game');
+const characterOptions = document.querySelectorAll('.character-option');
+const healthBarFill = document.getElementById('health-fill');
+const energyBarFill = document.getElementById('energy-fill');
+const currencyAmount = document.getElementById('currency-amount');
+const planetInfoPanel = document.getElementById('planet-info');
+const planetName = document.getElementById('planet-name');
+const planetStatus = document.getElementById('planet-status');
+const planetDefense = document.getElementById('defense-value');
+const conquerButton = document.getElementById('conquer-btn');
+const gameOverScreen = document.getElementById('game-over-screen'); // <-- Schermata Game Over
+const restartButton = document.getElementById('restart-game'); // <-- Pulsante Restart
+const upgradesScreen = document.getElementById('upgrades-screen'); // <-- Schermata Potenziamenti
+const closeUpgradesButton = document.getElementById('close-upgrades'); // <-- Pulsante Chiudi
+const upgradeButtons = document.querySelectorAll('.upgrade-btn'); // <-- Tutti i pulsanti Potenzia
+const legendScreen = document.getElementById('legend-screen'); // <-- Nuovo: Legenda
+const closeLegendButton = document.getElementById('close-legend'); // <-- Nuovo: Pulsante chiudi legenda
+
+let isGameOver = false; // Flag per stato Game Over
+let isLegendOpen = false; // <-- Nuovo: Stato legenda
+
+// --- Initialization ---
+init();
+
+function init() {
+    // --- Scene Setup ---
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000005); // Spazio profondo
+    scene.fog = new THREE.FogExp2(0x000005, 0.0005); // Nebbia spaziale
+
+    // --- Camera Setup ---
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 20000); // Aumenta la distanza di rendering
+    camera.position.set(0, 5, 10);
+
+    // --- Renderer Setup ---
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.getElementById('game-container').appendChild(renderer.domElement);
+
+    // --- Lighting ---
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.5); // Luce ambientale più soffusa
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.5); // Luce solare principale
+    sunLight.position.set(100, 100, 100);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 0.5;
+    sunLight.shadow.camera.far = 5000;
+    scene.add(sunLight);
+
+    // --- Create Target Indicator ---
+    createTargetIndicator();
+
+    // --- Controls Setup (Pointer Lock) ---
+    controls = new PointerLockControls(camera, document.body);
+    scene.add(controls.getObject());
+
+    controls.addEventListener('lock', () => {
+        console.log('Pointer locked');
+        // Nascondi hint controlli quando bloccato
+        document.getElementById('controls-hint').style.opacity = '0'; 
+    });
+    controls.addEventListener('unlock', () => {
+        console.log('Pointer unlocked');
+        // Mostra hint controlli quando sbloccato
+        document.getElementById('controls-hint').style.opacity = '1'; 
+        // Se la schermata potenziamenti è visibile, non fare nulla, altrimenti mostra hint
+        if (!upgradesScreen.classList.contains('hidden')) {
+             document.getElementById('controls-hint').style.opacity = '0'; // Nascondi se upgrade aperto
+        }
+    });
+
+    // --- Event Listeners ---
+    window.addEventListener('resize', onWindowResize);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    document.addEventListener('mousedown', onMouseDown);
+    conquerButton.addEventListener('click', attemptConquerPlanet);
+    restartButton.addEventListener('click', restartGame);
+    closeUpgradesButton.addEventListener('click', closeUpgradesScreen);
+    closeLegendButton.addEventListener('click', closeLegendScreen); // <-- Nuovo: Chiudi legenda
+    
+    // Aggiungi listener ai pulsanti di potenziamento
+    upgradeButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const stat = button.closest('.upgrade-item').getAttribute('data-stat');
+            attemptUpgrade(stat);
+        });
+    });
+    
+    // Aggiungi listener per aprire/chiudere la schermata potenziamenti e legenda
+    document.addEventListener('keydown', (event) => {
+        if (event.code === 'KeyU' && !isGameOver && player) { // Usa 'U' per potenziamenti
+            if (upgradesScreen.classList.contains('hidden')) {
+                openUpgradesScreen();
+            } else {
+                closeUpgradesScreen();
+            }
+        }
+        
+        if (event.code === 'KeyH' && !isGameOver) { // Usa 'H' per la legenda
+             if (legendScreen.classList.contains('hidden')) {
+                 openLegendScreen();
+             } else {
+                 closeLegendScreen();
+             }
+        }
+    });
+
+    // --- Character Selection Setup ---
+    let selectedRace = 'saiyan'; // MODIFICA: default selection
+    characterOptions.forEach(option => {
+        // Seleziona automaticamente il Saiyan
+        if (option.getAttribute('data-race') === 'saiyan') {
+            option.classList.add('selected');
+        }
+        
+        option.addEventListener('click', () => {
+            characterOptions.forEach(opt => opt.classList.remove('selected'));
+            option.classList.add('selected');
+            selectedRace = option.getAttribute('data-race');
+            startGameButton.disabled = false;
+        });
+    });
+
+    startGameButton.addEventListener('click', () => {
+        console.log('Begin Conquest button clicked');
+        if (selectedRace) {
+            console.log('Starting game with:', selectedRace); // DEBUG
+            try {
+                startGame(selectedRace);
+            } catch (error) {
+                console.error('Error starting game:', error);
+            }
+        } else {
+            console.warn('No race selected!');
+        }
+    });
+    startGameButton.disabled = false; // MODIFICA: abilitiamo subito il pulsante
+
+    // --- Gestione diretta dell'ID start-game per sicurezza ---
+    document.getElementById('start-game').onclick = function() {
+        console.log('Button clicked via direct ID handler');
+        if (selectedRace) {
+            try {
+                startGame(selectedRace);
+            } catch (error) {
+                console.error('Error in direct handler:', error);
+            }
+        }
+        return false; // Previeni comportamento di default
+    };
+
+    // --- Show Character Selection ---
+    characterSelectionScreen.classList.remove('hidden');
+}
+
+// --- Create Target Indicator Arrow ---
+function createTargetIndicator() {
+    const arrowShape = new THREE.Shape();
+    arrowShape.moveTo(0, 0.5);
+    arrowShape.lineTo(0.5, -0.5);
+    arrowShape.lineTo(0.2, -0.5);
+    arrowShape.lineTo(0.2, -1.5);
+    arrowShape.lineTo(-0.2, -1.5);
+    arrowShape.lineTo(-0.2, -0.5);
+    arrowShape.lineTo(-0.5, -0.5);
+    arrowShape.closePath();
+
+    const extrudeSettings = { depth: 0.2, bevelEnabled: false };
+    const geometry = new THREE.ExtrudeGeometry(arrowShape, extrudeSettings);
+    const material = new THREE.MeshPhongMaterial({ color: 0x00ff00, emissive: 0x005500 });
+    
+    targetIndicatorArrow = new THREE.Mesh(geometry, material);
+    targetIndicatorArrow.scale.set(5, 5, 5); // Rendi la freccia più grande
+    targetIndicatorArrow.visible = false; // Inizia nascosta
+    scene.add(targetIndicatorArrow);
+}
+
+// --- Game Start ---
+function startGame(playerRace) {
+    console.log('startGame called with race:', playerRace); // DEBUG
+    
+    try {
+        characterSelectionScreen.classList.add('hidden'); // Nascondi selezione personaggio
+        
+        // --- Create Player ---
+        console.log('Creating player...'); // DEBUG
+        player = new Player(playerRace);
+        console.log('Player created:', player); // DEBUG
+        
+        player.createMesh(); // Crea la mesh del giocatore (anche se invisibile in prima persona)
+        // Non aggiungiamo la mesh alla scena direttamente se siamo in prima persona
+        
+        // --- Universe Generation ---
+        console.log('Generating universe...'); // DEBUG
+        universeGenerator = new UniverseGenerator();
+        const universeData = universeGenerator.generateUniverse(50, 5); // Genera 50 sistemi con 5 pianeti ciascuno
+        console.log('Universe data:', universeData); // DEBUG
+        
+        createUniverseVisuals(universeData.systems, universeData.planets);
+        console.log('Universe visuals created'); // DEBUG
+
+        // --- Create Portals ---
+        // createPortals(); // TODO: Reimplementare la logica dei portali con i dati del giocatore
+        createExitPortal(); // Per ora creiamo solo il portale di uscita
+        console.log('Portals created'); // DEBUG
+
+        // --- Lock Controls and Start Game Loop ---
+        console.log('Locking controls and starting game loop'); // DEBUG
+        controls.lock(); // <-- AGGIUNTO: Blocca il puntatore qui!
+        animate(); 
+    } catch (error) {
+        console.error('Error in startGame:', error); // Catch exceptions
+    }
+}
+
+// --- Create Universe Visuals ---
+function createUniverseVisuals(systems, planets) {
+    planetMeshes = [];
+    starMeshes = [];
+    activeEnemies = []; // Resetta l'array dei nemici
+
+    const planetGeometry = new THREE.SphereGeometry(1, 32, 32); 
+    const starGeometry = new THREE.SphereGeometry(1, 32, 32);
+
+    // Crea stelle
+    systems.forEach(system => {
+        const starMaterial = new THREE.MeshBasicMaterial({ color: system.starColor });
+        const starMesh = new THREE.Mesh(starGeometry, starMaterial);
+        starMesh.position.copy(system.position);
+        starMesh.scale.setScalar(system.starSize * 5); // Scala per visibilità
+        starMesh.userData.systemData = system; // Salva i dati del sistema nella mesh
+        scene.add(starMesh);
+        starMeshes.push(starMesh);
+    });
+
+    // Crea pianeti e le loro difese
+    planets.forEach(planetData => {
+        const planetMaterial = new THREE.MeshStandardMaterial({
+            color: planetData.color,
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        const planetMesh = new THREE.Mesh(planetGeometry, planetMaterial);
+        planetMesh.position.copy(planetData.position);
+        planetMesh.scale.setScalar(planetData.size * 2); // Scala per visibilità
+        planetMesh.castShadow = true;
+        planetMesh.receiveShadow = true;
+        planetMesh.userData.planetData = planetData; 
+        scene.add(planetMesh);
+        planetMeshes.push(planetMesh);
+        
+        // --- Genera Difese Planetarie ---
+        if (!planetData.isConquered) {
+            const numDefenses = Math.floor(planetData.defense / 10); // Numero difese basato sulla forza
+            for (let i = 0; i < numDefenses; i++) {
+                // Posiziona nemici sulla superficie del pianeta
+                const enemyType = Math.random() < 0.7 ? 'drone' : 'turret';
+                const planetRadius = planetData.size * 2;
+                
+                // Punto casuale sulla sfera del pianeta
+                const phi = Math.acos(2 * Math.random() - 1);
+                const theta = Math.random() * Math.PI * 2;
+                
+                const enemyLocalPos = new THREE.Vector3();
+                enemyLocalPos.setFromSphericalCoords(planetRadius + (enemyType === 'turret' ? 2 : 3), phi, theta);
+                
+                const enemyWorldPos = new THREE.Vector3().copy(planetData.position).add(enemyLocalPos);
+                
+                const enemy = new Enemy(enemyType, enemyWorldPos, planetData);
+                const enemyMesh = enemy.createMesh();
+                
+                // Orienta la torretta verso l'esterno del pianeta
+                if (enemyType === 'turret') {
+                   enemyMesh.lookAt(planetData.position);
+                   enemyMesh.rotateX(Math.PI / 2); // Correggi orientamento cilindro
+                }
+                
+                scene.add(enemyMesh);
+                activeEnemies.push(enemy);
+            }
+        }
+    });
+}
+
+// --- Portal Creation (Simplified for now) ---
+function createExitPortal() {
+    // Create portal group
+    exitPortalGroup = new THREE.Group();
+    exitPortalGroup.position.set(0, 10, -50); // Posizione fissa per ora
+    
+    // Create portal effect
+    const exitPortalGeometry = new THREE.TorusGeometry(10, 1, 16, 100);
+    const exitPortalMaterial = new THREE.MeshPhongMaterial({
+        color: 0x00ff00,
+        emissive: 0x00ff00,
+        transparent: true,
+        opacity: 0.8
+    });
+    const exitPortal = new THREE.Mesh(exitPortalGeometry, exitPortalMaterial);
+    exitPortalGroup.add(exitPortal);
+    
+    // Create portal inner surface
+    const exitPortalInnerGeometry = new THREE.CircleGeometry(9, 32);
+    const exitPortalInnerMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        transparent: true,
+        opacity: 0.5,
+        side: THREE.DoubleSide
+    });
+    const exitPortalInner = new THREE.Mesh(exitPortalInnerGeometry, exitPortalInnerMaterial);
+    exitPortalGroup.add(exitPortalInner);
+    
+    // Add label
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 128;
+    context.fillStyle = '#00ff00';
+    context.font = 'bold 48px Arial';
+    context.textAlign = 'center';
+    context.fillText('VIBEVERSE PORTAL', canvas.width/2, canvas.height/2);
+    const texture = new THREE.CanvasTexture(canvas);
+    const labelGeometry = new THREE.PlaneGeometry(20, 5);
+    const labelMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    const label = new THREE.Mesh(labelGeometry, labelMaterial);
+    label.position.y = 15;
+    exitPortalGroup.add(label);
+    
+    // Add portal to scene
+    scene.add(exitPortalGroup);
+    
+    // Create portal collision box
+    exitPortalBox = new THREE.Box3().setFromObject(exitPortalGroup);
+}
+
+// --- Animation Loop ---
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const time = performance.now();
+    const delta = (time - prevTime) / 1000;
+
+    // Non aggiornare se il gioco non è iniziato, se il puntatore non è bloccato o se è Game Over
+    if (!player || !controls.isLocked || isGameOver) { 
+        prevTime = time;
+        renderer.render(scene, camera);
+        return; 
+    }
+
+    // --- Update Player --- 
+    const cameraDirection = new THREE.Vector3();
+    camera.getWorldDirection(cameraDirection);
+    player.update(delta, moveForward, moveBackward, moveLeft, moveRight, moveUp, moveDown, cameraDirection);
+    controls.getObject().position.copy(player.position);
+
+    // --- Update Universe ---
+    universeGenerator.updatePlanetPositions(delta * 10); // Accelera il movimento orbitale per visibilità
+    planetMeshes.forEach(mesh => {
+        mesh.position.copy(mesh.userData.planetData.position);
+        mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
+    });
+
+    // --- Update Enemies ---
+    for (let i = activeEnemies.length - 1; i >= 0; i--) {
+        const enemy = activeEnemies[i];
+        if (enemy.isActive) {
+            // enemy.update() ora ritorna i dati del proiettile se spara, altrimenti null.
+            const enemyProjectileData = enemy.update(delta, player); 
+            if (enemyProjectileData) {
+                createProjectile(enemyProjectileData); // Crea proiettile nemico
+            }
+        } else {
+            // Rimuovi nemico inattivo (distrutto)
+            enemy.removeFromScene(scene);
+            activeEnemies.splice(i, 1);
+        }
+    }
+
+    // --- Update Projectiles ---
+    updateProjectiles(delta);
+
+    // --- Update Target Indicator ---
+    updateTargetIndicator(); // <-- Nuovo: Aggiorna posizione/rotazione freccia
+
+    // --- Check Interactions ---
+    checkPlanetInteraction();
+    checkPortalInteraction();
+
+    // --- Update UI ---
+    updateUI();
+
+    // --- Render Scene ---
+    renderer.render(scene, camera);
+    
+    prevTime = time;
+}
+
+// --- Update Target Indicator ---
+function updateTargetIndicator() {
+    if (!player || !targetIndicatorArrow) return;
+
+    let targetPosition = null;
+
+    // Se c'è un pianeta selezionato (in range), punta a quello
+    if (currentTargetPlanet) {
+        targetPosition = currentTargetPlanet.position;
+    } else {
+        // Altrimenti, trova il pianeta più vicino (ma non troppo vicino)
+        const result = universeGenerator.findNearestPlanet(player.position, 5000); // Cerca più lontano
+        if (result.planet && player.position.distanceTo(result.planet.position) > 30) { // Non mostrare se troppo vicini
+            targetPosition = result.planet.position;
+        } 
+    }
+
+    if (targetPosition) {
+        targetIndicatorArrow.visible = true;
+
+        // Posiziona la freccia leggermente davanti e sopra la camera
+        const offsetDistance = 15;
+        const indicatorPosition = camera.position.clone().add( 
+            new THREE.Vector3(0, 0, -offsetDistance).applyQuaternion(camera.quaternion)
+        );
+         indicatorPosition.y += 2; // Alzala un po'
+        targetIndicatorArrow.position.copy(indicatorPosition);
+
+        // Orienta la freccia verso il target
+        targetIndicatorArrow.lookAt(targetPosition);
+        
+        // Ruota per puntare correttamente (la geometria extrude potrebbe essere orientata su Y)
+        targetIndicatorArrow.rotateX(Math.PI / 2); 
+
+    } else {
+        targetIndicatorArrow.visible = false;
+    }
+}
+
+// --- Update Functions ---
+function updateProjectiles(delta) {
+    for (let i = activeProjectiles.length - 1; i >= 0; i--) {
+        const projectile = activeProjectiles[i];
+        const moveDistance = projectile.speed * delta;
+        const prevPosition = projectile.mesh.position.clone();
+        projectile.mesh.position.addScaledVector(projectile.direction, moveDistance);
+        projectile.distanceTraveled += moveDistance;
+
+        let hit = false;
+
+        // --- Collision Detection ---
+        if (projectile.isEnemyProjectile) {
+            // Proiettile nemico: controlla collisione con il giocatore
+            const playerCollider = new THREE.Box3().setFromCenterAndSize(player.position, new THREE.Vector3(2, 4, 2));
+            const projectileCollider = new THREE.Box3().setFromObject(projectile.mesh);
+
+            if (playerCollider.intersectsBox(projectileCollider)) {
+                console.log("Player hit!");
+                const playerAlive = player.takeDamage(projectile.power);
+                hit = true;
+                createHitEffect(projectile.mesh.position, 0xff0000);
+                if (!playerAlive) {
+                    handlePlayerDeath(); // <-- Chiama qui se il giocatore muore
+                }
+            }
+        } else {
+            // Proiettile giocatore: controlla collisione con i nemici
+            for (let j = activeEnemies.length - 1; j >= 0; j--) {
+                const enemy = activeEnemies[j];
+                if (!enemy.isActive || !enemy.mesh) continue;
+
+                const enemyCollider = new THREE.Box3().setFromObject(enemy.mesh);
+                const projectileCollider = new THREE.Box3().setFromObject(projectile.mesh);
+
+                if (enemyCollider.intersectsBox(projectileCollider)) {
+                    console.log("Enemy hit!");
+                    const enemyHitPosition = projectile.mesh.position.clone(); // Salva posizione impatto
+                    const enemyMeshScale = enemy.mesh.scale.x; // Per scalare l'esplosione
+                    const enemyStillAlive = enemy.takeDamage(projectile.power);
+                    hit = true;
+                    createHitEffect(enemyHitPosition, 0xffff00); // Effetto colpo giallo
+
+                    if (!enemyStillAlive) {
+                         // Il nemico è stato distrutto nel metodo takeDamage, 
+                         // verrà rimosso nel ciclo di update dei nemici.
+                         // --- Assegna Ricompense ---
+                         const expGained = enemy.type === 'drone' ? 10 : 25; // Più exp per le torrette
+                         const currencyGained = enemy.type === 'drone' ? 5 : 10;
+                         player.gainExperience(expGained);
+                         player.currency += currencyGained;
+                         console.log(`Enemy destroyed! Gained ${expGained} EXP and ${currencyGained} currency.`);
+                         createExplosionEffect(enemyHitPosition, enemyMeshScale); // Effetto esplosione
+                         // TODO: Mostrare feedback visivo/sonoro per la ricompensa
+                         // -------------------------
+                    }
+                    break; // Un proiettile colpisce solo un nemico
+                }
+            }
+        }
+
+        // Rimuovi proiettile se ha superato la portata o ha colpito qualcosa
+        if (hit || projectile.distanceTraveled >= projectile.range) {
+            scene.remove(projectile.mesh);
+            activeProjectiles.splice(i, 1);
+        } 
+    }
+}
+
+function checkPlanetInteraction() {
+    const result = universeGenerator.findNearestPlanet(player.position, 50); // Raggio di interazione
+    
+    if (result.planet && result.distance < (result.planet.size * 2 + 5)) { // Se abbastanza vicino
+        if (currentTargetPlanet !== result.planet) {
+            currentTargetPlanet = result.planet;
+            showPlanetInfo(result.planet);
+        }
+    } else {
+        if (currentTargetPlanet) {
+            hidePlanetInfo();
+            currentTargetPlanet = null;
+        }
+    }
+}
+
+function checkPortalInteraction() {
+    if (!exitPortalBox) return;
+    
+    // Usa una collision box semplice per il giocatore
+    const playerCollider = new THREE.Box3().setFromCenterAndSize(
+        player.position,
+        new THREE.Vector3(2, 4, 2) // Dimensioni approssimative del giocatore
+    );
+
+    if (playerCollider.intersectsBox(exitPortalBox)) {
+        // --- Redirect Logic ---
+        const playerData = player.getPortalData();
+        const currentParams = new URLSearchParams(window.location.search);
+        const newParams = new URLSearchParams();
+
+        newParams.append('portal', 'true');
+        newParams.append('ref', window.location.host + window.location.pathname);
+
+        // Aggiungi dati giocatore
+        for (const key in playerData) {
+            newParams.append(key, playerData[key]);
+        }
+
+        // Mantieni altri parametri rilevanti (se ce ne sono)
+        for (const [key, value] of currentParams) {
+            if (!newParams.has(key) && key !== 'ref' && key !== 'portal') {
+                newParams.append(key, value);
+            }
+        }
+
+        const paramString = newParams.toString();
+        window.location.href = 'http://portal.pieter.com' + (paramString ? '?' + paramString : '');
+    }
+    
+    // TODO: Aggiungere logica per il return portal
+}
+
+function updateUI() {
+    if (!player) return;
+
+    healthBarFill.style.width = `${(player.health / player.maxHealth) * 100}%`;
+    energyBarFill.style.width = `${(player.energy / player.maxEnergy) * 100}%`;
+    currencyAmount.textContent = player.currency;
+
+    // TODO: Implementare minimappa
+}
+
+function showPlanetInfo(planet) {
+    planetName.textContent = planet.name;
+    planetStatus.textContent = `Status: ${planet.isConquered ? 'Conquered by ' + planet.conqueredBy : 'Unconquered'}`;
+    planetDefense.textContent = planet.defense;
+    conquerButton.disabled = planet.isConquered;
+    planetInfoPanel.classList.remove('hidden');
+}
+
+function hidePlanetInfo() {
+    planetInfoPanel.classList.add('hidden');
+}
+
+// --- Event Handlers ---
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function onKeyDown(event) {
+    if (!controls.isLocked) return;
+    switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW':
+            moveForward = true;
+            break;
+        case 'ArrowLeft':
+        case 'KeyA':
+            moveLeft = true;
+            break;
+        case 'ArrowDown':
+        case 'KeyS':
+            moveBackward = true;
+            break;
+        case 'ArrowRight':
+        case 'KeyD':
+            moveRight = true;
+            break;
+        case 'Space':
+            if (!player.isFlying) {
+                player.toggleFlight();
+                moveUp = true; // Salto iniziale per decollare
+                setTimeout(() => moveUp = false, 200); // Ferma la salita iniziale dopo un po'
+            } else {
+                moveUp = true;
+            }
+            break;
+        case 'ShiftLeft':
+        case 'KeyC': // Usa C per scendere in volo
+             if (player.isFlying) {
+                 moveDown = true;
+             }
+            break;
+    }
+}
+
+function onKeyUp(event) {
+    switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW':
+            moveForward = false;
+            break;
+        case 'ArrowLeft':
+        case 'KeyA':
+            moveLeft = false;
+            break;
+        case 'ArrowDown':
+        case 'KeyS':
+            moveBackward = false;
+            break;
+        case 'ArrowRight':
+        case 'KeyD':
+            moveRight = false;
+            break;
+        case 'Space':
+             moveUp = false;
+            break;
+        case 'ShiftLeft':
+        case 'KeyC':
+             moveDown = false;
+            break;
+    }
+}
+
+function onMouseDown(event) {
+    if (!controls.isLocked || !player) return;
+
+    const attackDirection = new THREE.Vector3();
+    camera.getWorldDirection(attackDirection);
+
+    let attackData = null;
+    if (event.button === 0) { // Tasto sinistro - Attacco normale
+        attackData = player.attackEnergy(attackDirection);
+    } else if (event.button === 2) { // Tasto destro - Attacco speciale
+        attackData = player.attackSpecial(attackDirection);
+    }
+
+    if (attackData) {
+        createProjectile(attackData);
+    }
+}
+
+// --- Game Logic Functions ---
+function createProjectile(data) {
+    let geometry, material;
+    let scale = 1;
+
+    if (data.type === 'energyWave') {
+        geometry = new THREE.SphereGeometry(data.width * 0.5, 16, 8);
+        material = new THREE.MeshBasicMaterial({ color: data.color, transparent: true, opacity: 0.8 });
+        scale = data.width;
+    } else if (data.type === 'laserEyes') {
+        geometry = new THREE.CylinderGeometry(0.1 * data.width, 0.1 * data.width, data.range, 8);
+        material = new THREE.MeshBasicMaterial({ color: data.color, transparent: true, opacity: 0.9 });
+        // Il laser viene gestito diversamente, forse con un Raycaster o una linea visiva
+        // Per ora, simuliamo con un proiettile molto veloce
+    } else { // Attacco energetico normale
+        geometry = new THREE.SphereGeometry(0.5, 8, 8);
+        material = new THREE.MeshBasicMaterial({ color: data.color });
+    }
+
+    const projectileMesh = new THREE.Mesh(geometry, material);
+    projectileMesh.position.copy(data.origin).addScaledVector(data.direction, 2); // Parte leggermente davanti al giocatore
+    projectileMesh.scale.setScalar(scale);
+    
+    // Orienta il cilindro del laser
+    if (data.type === 'laserEyes') {
+        const targetPosition = new THREE.Vector3().copy(data.origin).addScaledVector(data.direction, data.range);
+        projectileMesh.lookAt(targetPosition);
+        projectileMesh.rotateX(Math.PI / 2); // Correggi orientamento cilindro
+        projectileMesh.position.addScaledVector(data.direction, data.range / 2); // Posiziona al centro della traiettoria
+    }
+
+    scene.add(projectileMesh);
+
+    activeProjectiles.push({
+        mesh: projectileMesh,
+        direction: data.direction,
+        speed: data.speed,
+        power: data.power,
+        range: data.range,
+        distanceTraveled: 0,
+        type: data.type
+    });
+}
+
+function attemptConquerPlanet() {
+    if (currentTargetPlanet && player) {
+        const result = universeGenerator.conquerPlanet(currentTargetPlanet, player.race, player.attackPower);
+        console.log(result.message); // Mostra messaggio in console per ora
+
+        if (result.success) {
+            player.currency += result.resources;
+            player.addConqueredPlanet(currentTargetPlanet);
+            showPlanetInfo(currentTargetPlanet); // Aggiorna UI
+            updatePlanetVisuals(currentTargetPlanet); // Cambia aspetto pianeta?
+
+            // --- Rimuovi i nemici dal pianeta conquistato ---
+            for (let i = activeEnemies.length - 1; i >= 0; i--) {
+                const enemy = activeEnemies[i];
+                if (enemy.targetPlanet && enemy.targetPlanet.id === currentTargetPlanet.id) {
+                    enemy.isActive = false; // Segna come inattivo per la rimozione nel ciclo animate
+                    enemy.removeFromScene(scene); // Rimuovi subito la mesh
+                    activeEnemies.splice(i, 1); // Rimuovi dall'array
+                }
+            }
+            // -------------------------------------------------
+        }
+        // TODO: Mostrare il messaggio all'utente in modo più visibile
+    }
+}
+
+function updatePlanetVisuals(planet) {
+    const mesh = planetMeshes.find(m => m.userData.planetData.id === planet.id);
+    if (mesh) {
+        // Esempio: Aggiungi un'aura al pianeta conquistato
+        const conquestAuraGeo = new THREE.SphereGeometry(planet.size * 2 + 1, 32, 32);
+        const conquestAuraMat = new THREE.MeshBasicMaterial({ 
+            color: player.race === 'saiyan' ? 0x0000ff : 0xff0000, 
+            transparent: true, 
+            opacity: 0.3, 
+            side: THREE.BackSide 
+        });
+        const aura = new THREE.Mesh(conquestAuraGeo, conquestAuraMat);
+        mesh.add(aura); // Aggiungi l'aura come figlio della mesh del pianeta
+    }
+}
+
+// --- Visual Effects ---
+function createHitEffect(position, color = 0xffff00) {
+    const effectDuration = 0.2; // Secondi
+    const geometry = new THREE.SphereGeometry(0.5, 8, 8);
+    const material = new THREE.MeshBasicMaterial({ 
+        color: color, 
+        transparent: true, 
+        opacity: 0.8 
+    });
+    const effectMesh = new THREE.Mesh(geometry, material);
+    effectMesh.position.copy(position);
+    scene.add(effectMesh);
+
+    // Anima l'effetto (dissolvenza)
+    let elapsed = 0;
+    function animateEffect(time) {
+        elapsed += time;
+        if (elapsed < effectDuration) {
+            effectMesh.scale.multiplyScalar(1 + 3 * time); // Espandi rapidamente
+            effectMesh.material.opacity = 0.8 * (1 - elapsed / effectDuration);
+            requestAnimationFrame(animateEffect);
+        } else {
+            scene.remove(effectMesh);
+        }
+    }
+    requestAnimationFrame(animateEffect);
+}
+
+function createExplosionEffect(position, scale = 1, color = 0xff8800) {
+    const effectDuration = 0.5; // Secondi
+    const particles = 20;
+    const geometry = new THREE.BufferGeometry();
+    const positions = [];
+    const material = new THREE.PointsMaterial({ 
+        color: color, 
+        size: 0.5 * scale,
+        transparent: true,
+        opacity: 1.0,
+        blending: THREE.AdditiveBlending
+    });
+
+    for (let i = 0; i < particles; i++) {
+        positions.push(0, 0, 0); // Inizia tutte le particelle al centro
+    }
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+    const particleSystem = new THREE.Points(geometry, material);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    // Anima l'esplosione
+    const initialVelocities = [];
+    for (let i = 0; i < particles; i++) {
+        initialVelocities.push(new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2
+        ).normalize().multiplyScalar(Math.random() * 10 * scale));
+    }
+
+    let elapsed = 0;
+    function animateExplosion(delta) {
+        elapsed += delta;
+        if (elapsed < effectDuration) {
+            const posAttribute = particleSystem.geometry.attributes.position;
+            for (let i = 0; i < particles; i++) {
+                posAttribute.setXYZ(
+                    i,
+                    posAttribute.getX(i) + initialVelocities[i].x * delta,
+                    posAttribute.getY(i) + initialVelocities[i].y * delta,
+                    posAttribute.getZ(i) + initialVelocities[i].z * delta
+                );
+            }
+            posAttribute.needsUpdate = true;
+            particleSystem.material.opacity = 1.0 * (1 - elapsed / effectDuration);
+            requestAnimationFrame(animateExplosion);
+        } else {
+            scene.remove(particleSystem);
+        }
+    }
+    requestAnimationFrame(animateExplosion);
+}
+
+// --- Player Death Handling ---
+function handlePlayerDeath() {
+    if (isGameOver) return; // Evita esecuzioni multiple
+    
+    console.log("GAME OVER!");
+    isGameOver = true;
+    controls.unlock(); // Sblocca il puntatore
+    closeUpgradesScreen(); // Chiudi schermate UI
+    closeLegendScreen();
+    
+    // Mostra la schermata di Game Over
+    gameOverScreen.classList.remove('hidden');
+    
+    // Stoppa l'animazione principale o impedisci aggiornamenti
+    // (Il check `if (!player || !controls.isLocked)` in animate() dovrebbe bastare se isGameOver è true)
+}
+
+function restartGame() {
+    // Ricarica semplicemente la pagina per riavviare
+    // Questo è il modo più semplice per resettare tutto lo stato
+    location.reload(); 
+}
+
+// --- Upgrades Screen Logic ---
+function openUpgradesScreen() {
+    if (!player) return;
+    controls.unlock(); // Sblocca il puntatore per interagire con la UI
+    closeLegendScreen(); // Chiudi la legenda se aperta
+    upgradesScreen.classList.remove('hidden');
+    updateUpgradesUI();
+}
+
+function closeUpgradesScreen() {
+    upgradesScreen.classList.add('hidden');
+    // Non bloccare automaticamente il puntatore, l'utente dovrà cliccare di nuovo
+}
+
+function updateUpgradesUI() {
+    if (!player) return;
+    
+    upgradeButtons.forEach(button => {
+        const item = button.closest('.upgrade-item');
+        const stat = item.getAttribute('data-stat');
+        const levelSpan = item.querySelector('.upgrade-level');
+        const costSpan = item.querySelector('.upgrade-cost');
+        
+        const currentLevel = player.upgrades[stat];
+        const maxLevel = 10;
+        const baseCost = 100;
+        const cost = baseCost * Math.pow(2, currentLevel); // Costo esponenziale
+        
+        levelSpan.textContent = currentLevel;
+        costSpan.textContent = cost;
+        
+        if (currentLevel >= maxLevel) {
+            button.textContent = 'MAX';
+            button.disabled = true;
+            costSpan.textContent = '--';
+        } else if (player.currency < cost) {
+            button.textContent = 'POTENZIA';
+            button.disabled = true;
+        } else {
+            button.textContent = 'POTENZIA';
+            button.disabled = false;
+        }
+    });
+}
+
+function attemptUpgrade(stat) {
+    if (!player) return;
+    
+    const currentLevel = player.upgrades[stat];
+    const baseCost = 100;
+    const cost = baseCost * Math.pow(2, currentLevel);
+    
+    const result = player.upgrade(stat, cost);
+    
+    if (result.success) {
+        console.log(result.message);
+        updateUpgradesUI(); // Aggiorna UI dopo il potenziamento
+        updateUI(); // Aggiorna anche le barre e la valuta principale
+    } else {
+        console.warn(result.message); // Mostra errore in console
+        // TODO: Mostrare messaggio di errore all'utente
+    }
+}
+
+// --- Legend Screen Logic ---
+function openLegendScreen() {
+    controls.unlock(); // Sblocca il puntatore per interagire con la UI
+    closeUpgradesScreen(); // Chiudi potenziamenti se aperti
+    legendScreen.classList.remove('hidden');
+    isLegendOpen = true;
+}
+
+function closeLegendScreen() {
+    legendScreen.classList.add('hidden');
+    isLegendOpen = false;
+    // Non bloccare automaticamente il puntatore
+} 
