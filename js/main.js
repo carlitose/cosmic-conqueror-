@@ -72,6 +72,154 @@ let lastPhysicsUpdate = 0; // Timestamp dell'ultimo aggiornamento completo della
 let collisionCache = new Map(); // Cache per la collision detection
 let audioPool = {}; // Pool di oggetti audio per il riutilizzo
 
+// Performance monitoring - inizializzato prima di init()
+let performanceMonitor = {
+    fpsHistory: [],
+    lastFrameTime: 0,
+    frameCount: 0,
+    lowQualityMode: false,
+    targetFrameRate: 60, // Target FPS predefinito
+    lastFrameTimestamp: 0, // Timestamp dell'ultimo frame renderizzato
+    
+    update: function() {
+        const now = performance.now();
+        if (this.lastFrameTime > 0) {
+            const delta = now - this.lastFrameTime;
+            const fps = 1000 / delta;
+            
+            // Mantieni gli ultimi 10 campioni
+            this.fpsHistory.push(fps);
+            if (this.fpsHistory.length > 10) {
+                this.fpsHistory.shift();
+            }
+            
+            // Log ogni 100 frame
+            if (this.frameCount % 100 === 0) {
+                console.log(`Performance: ${this.getAverageFPS().toFixed(2)} FPS (Quality: ${this.lowQualityMode ? 'LOW' : 'NORMAL'}, Target: ${this.targetFrameRate})`);
+            }
+            
+            // Verifica se cambiare modalità
+            this.checkQualityMode();
+            
+            this.frameCount++;
+        }
+        
+        this.lastFrameTime = now;
+    },
+    
+    getAverageFPS: function() {
+        if (this.fpsHistory.length === 0) return 60;
+        return this.fpsHistory.reduce((sum, val) => sum + val, 0) / this.fpsHistory.length;
+    },
+    
+    checkQualityMode: function() {
+        const avgFps = this.getAverageFPS();
+        
+        // Switch to low quality if FPS drops below 20
+        if (avgFps < 20 && !this.lowQualityMode) {
+            this.enableLowQuality();
+        } 
+        // Try to switch back to normal quality occasionally
+        else if (avgFps > 40 && this.lowQualityMode && this.frameCount % 300 === 0) {
+            this.enableNormalQuality();
+        }
+    },
+    
+    enableLowQuality: function() {
+        console.warn("Enabling LOW QUALITY mode to improve performance");
+        this.lowQualityMode = true;
+        
+        // Riduzione distanza visiva
+        camera.far = 5000;
+        camera.updateProjectionMatrix();
+        
+        // Disattiva effetti di post-processing
+        if (composer) {
+            composer.passes.forEach(pass => {
+                if (pass instanceof UnrealBloomPass) {
+                    pass.enabled = false;
+                }
+            });
+        }
+        
+        // Riduzione particelle
+        scene.traverse(object => {
+            if (object instanceof THREE.Points) {
+                if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
+                    const newSize = Math.floor(object.geometry.attributes.position.count / 2);
+                    object.geometry.setDrawRange(0, newSize);
+                }
+            }
+        });
+        
+        // Riduzione luci
+        this.reduceLights();
+    },
+    
+    enableNormalQuality: function() {
+        console.warn("Switching back to NORMAL quality mode");
+        this.lowQualityMode = false;
+        
+        // Ripristina distanza visiva
+        camera.far = 20000;
+        camera.updateProjectionMatrix();
+        
+        // Riattiva effetti
+        if (composer) {
+            composer.passes.forEach(pass => {
+                if (pass instanceof UnrealBloomPass) {
+                    pass.enabled = true;
+                }
+            });
+        }
+        
+        // Ripristina particelle
+        scene.traverse(object => {
+            if (object instanceof THREE.Points) {
+                if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
+                    object.geometry.setDrawRange(0, Infinity);
+                }
+            }
+        });
+    },
+    
+    reduceLights: function() {
+        // Trova e riduce intensità luci
+        let mainLightFound = false;
+        scene.traverse(object => {
+            if (object instanceof THREE.PointLight || object instanceof THREE.SpotLight) {
+                if (!mainLightFound) {
+                    mainLightFound = true;
+                    // Riduce intensità della luce principale
+                    object.intensity *= 0.7;
+                } else {
+                    // Disattiva completamente altre luci
+                    object.intensity = 0;
+                }
+            }
+        });
+    },
+    
+    shouldRenderFrame: function() {
+        // Implementa il limitatore di frame rate
+        const now = performance.now();
+        const elapsed = now - this.lastFrameTimestamp;
+        const frameDuration = 1000 / this.targetFrameRate;
+        
+        if (elapsed >= frameDuration) {
+            this.lastFrameTimestamp = now - (elapsed % frameDuration);
+            return true;
+        }
+        
+        return false;
+    },
+    
+    setTargetFPS: function(fps) {
+        this.targetFrameRate = fps;
+        console.log(`Frame rate limiter set to ${fps} FPS`);
+    }
+};
+
 // --- Sound Functions ---
 function initAudioPool() {
     // Definisci i suoni che verranno utilizzati di frequente
@@ -241,6 +389,7 @@ function init() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
     document.getElementById('game-container').appendChild(renderer.domElement);
 
     // --- Post-processing Effects ---
@@ -333,11 +482,34 @@ function init() {
             startGameButton.disabled = false;
         });
     });
+    
+    // Gestione del selettore FPS
+    const fpsSelect = document.getElementById('fps-select');
+    if (fpsSelect) {
+        fpsSelect.addEventListener('change', () => {
+            const fpsLimit = parseInt(fpsSelect.value);
+            console.log(`FPS limit selected: ${fpsLimit}`);
+        });
+    }
 
     startGameButton.addEventListener('click', () => {
         console.log('Begin Conquest button clicked');
         if (selectedRace) {
             console.log('Starting game with:', selectedRace); // DEBUG
+            
+            // Applica il limite FPS selezionato
+            if (fpsSelect) {
+                const fpsLimit = parseInt(fpsSelect.value);
+                if (fpsLimit > 0) {
+                    performanceMonitor.setTargetFPS(fpsLimit);
+                    console.log(`Game configured with ${fpsLimit} FPS limit`);
+                } else {
+                    // Imposta un valore alto per disabilitare il limite
+                    performanceMonitor.setTargetFPS(1000);
+                    console.log('Game configured with no FPS limit');
+                }
+            }
+            
             try {
                 startGame(selectedRace);
             } catch (error) {
@@ -515,6 +687,25 @@ function startGame(playerRace) {
 
         // --- Lock Controls and Start Game Loop ---
         console.log('Locking controls and starting game loop'); // DEBUG
+        
+        // Imposta il FPS limit predefinito
+        const fpsSelect = document.getElementById('fps-select');
+        if (fpsSelect) {
+            const fpsLimit = parseInt(fpsSelect.value);
+            if (fpsLimit > 0) {
+                performanceMonitor.setTargetFPS(fpsLimit);
+                console.log(`Game configured with ${fpsLimit} FPS limit`);
+            } else {
+                // Imposta un valore alto per disabilitare il limite
+                performanceMonitor.setTargetFPS(1000);
+                console.log('Game configured with no FPS limit');
+            }
+        } else {
+            // Fallback a 60 FPS se il selettore non esiste
+            performanceMonitor.setTargetFPS(60);
+            console.log('Game configured with default 60 FPS limit');
+        }
+        
         controls.lock(); // <-- AGGIUNTO: Blocca il puntatore qui!
         animate(); 
     } catch (error) {
@@ -896,6 +1087,11 @@ function animate() {
         
         // Aggiorna monitor prestazioni
         performanceMonitor.update();
+        
+        // Applica il limitatore di frame rate
+        if (!performanceMonitor.shouldRenderFrame()) {
+            return; // Salta il frame se stiamo superando il frame rate target
+        }
         
         const time = performance.now();
         const delta = (time - prevTime) / 1000;
@@ -2029,133 +2225,6 @@ function optimizedCollisionCheck(object1, object2, cacheKey) {
 
 // --- Global Variables ---
 // ... existing code ...
-
-// Performance monitoring
-let performanceMonitor = {
-    fpsHistory: [],
-    lastFrameTime: 0,
-    frameCount: 0,
-    lowQualityMode: false,
-    
-    update: function() {
-        const now = performance.now();
-        if (this.lastFrameTime > 0) {
-            const delta = now - this.lastFrameTime;
-            const fps = 1000 / delta;
-            
-            // Mantieni gli ultimi 10 campioni
-            this.fpsHistory.push(fps);
-            if (this.fpsHistory.length > 10) {
-                this.fpsHistory.shift();
-            }
-            
-            // Log ogni 100 frame
-            if (this.frameCount % 100 === 0) {
-                console.log(`Performance: ${this.getAverageFPS().toFixed(2)} FPS (Quality: ${this.lowQualityMode ? 'LOW' : 'NORMAL'})`);
-            }
-            
-            // Verifica se cambiare modalità
-            this.checkQualityMode();
-            
-            this.frameCount++;
-        }
-        
-        this.lastFrameTime = now;
-    },
-    
-    getAverageFPS: function() {
-        if (this.fpsHistory.length === 0) return 60;
-        return this.fpsHistory.reduce((sum, val) => sum + val, 0) / this.fpsHistory.length;
-    },
-    
-    checkQualityMode: function() {
-        const avgFps = this.getAverageFPS();
-        
-        // Switch to low quality if FPS drops below 20
-        if (avgFps < 20 && !this.lowQualityMode) {
-            this.enableLowQuality();
-        } 
-        // Try to switch back to normal quality occasionally
-        else if (avgFps > 40 && this.lowQualityMode && this.frameCount % 300 === 0) {
-            this.enableNormalQuality();
-        }
-    },
-    
-    enableLowQuality: function() {
-        console.warn("Enabling LOW QUALITY mode to improve performance");
-        this.lowQualityMode = true;
-        
-        // Riduzione distanza visiva
-        camera.far = 5000;
-        camera.updateProjectionMatrix();
-        
-        // Disattiva effetti di post-processing
-        if (composer) {
-            composer.passes.forEach(pass => {
-                if (pass instanceof UnrealBloomPass) {
-                    pass.enabled = false;
-                }
-            });
-        }
-        
-        // Riduzione particelle
-        scene.traverse(object => {
-            if (object instanceof THREE.Points) {
-                if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
-                    const newSize = Math.floor(object.geometry.attributes.position.count / 2);
-                    object.geometry.setDrawRange(0, newSize);
-                }
-            }
-        });
-        
-        // Riduzione luci
-        this.reduceLights();
-    },
-    
-    enableNormalQuality: function() {
-        console.warn("Switching back to NORMAL quality mode");
-        this.lowQualityMode = false;
-        
-        // Ripristina distanza visiva
-        camera.far = 20000;
-        camera.updateProjectionMatrix();
-        
-        // Riattiva effetti
-        if (composer) {
-            composer.passes.forEach(pass => {
-                if (pass instanceof UnrealBloomPass) {
-                    pass.enabled = true;
-                }
-            });
-        }
-        
-        // Ripristina particelle
-        scene.traverse(object => {
-            if (object instanceof THREE.Points) {
-                if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
-                    object.geometry.setDrawRange(0, Infinity);
-                }
-            }
-        });
-    },
-    
-    reduceLights: function() {
-        // Trova e riduce intensità luci
-        let mainLightFound = false;
-        scene.traverse(object => {
-            if (object instanceof THREE.PointLight || object instanceof THREE.SpotLight) {
-                if (!mainLightFound) {
-                    mainLightFound = true;
-                    // Riduce intensità della luce principale
-                    object.intensity *= 0.7;
-                } else {
-                    // Disattiva completamente altre luci
-                    object.intensity = 0;
-                }
-            }
-        });
-    }
-};
 
 // --- Helper per effetti visivi dei pianeti ---
 

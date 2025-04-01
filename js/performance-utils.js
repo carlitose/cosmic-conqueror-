@@ -119,12 +119,42 @@ export function cleanupUnusedResources(THREE, collisionCache) {
     }
 }
 
+// --- Frame Rate Limiter ---
+export function createFrameRateLimiter(targetFPS = 60) {
+    let lastFrameTime = 0;
+    let frameDuration = 1000 / targetFPS;
+    
+    return {
+        targetFPS: targetFPS,
+        
+        setTargetFPS: function(fps) {
+            this.targetFPS = fps;
+            frameDuration = 1000 / fps;
+            console.log(`Frame rate limiter set to ${fps} FPS`);
+        },
+        
+        shouldRenderFrame: function() {
+            const currentTime = performance.now();
+            const elapsed = currentTime - lastFrameTime;
+            
+            if (elapsed >= frameDuration) {
+                lastFrameTime = currentTime - (elapsed % frameDuration);
+                return true;
+            }
+            
+            return false;
+        }
+    };
+}
+
 // --- Performance Monitoring ---
 export function createPerformanceMonitor() {
     const monitor = {
         fpsHistory: [],
         lastFrameTime: 0,
         frameCount: 0,
+        lowQualityMode: false,
+        frameLimiter: createFrameRateLimiter(60),
         
         update: function() {
             const now = performance.now();
@@ -160,8 +190,24 @@ export function createPerformanceMonitor() {
         
         logPerformance: function() {
             if (this.frameCount % 100 === 0) {
-                console.log(`Performance: ${this.getAverageFPS().toFixed(2)} FPS`);
+                console.log(`Performance: ${this.getAverageFPS().toFixed(2)} FPS (Quality: ${this.lowQualityMode ? 'LOW' : 'NORMAL'})`);
             }
+        },
+        
+        enableLowQuality: function() {
+            this.lowQualityMode = true;
+        },
+        
+        disableLowQuality: function() {
+            this.lowQualityMode = false;
+        },
+        
+        shouldRenderFrame: function() {
+            return this.frameLimiter.shouldRenderFrame();
+        },
+        
+        setTargetFPS: function(fps) {
+            this.frameLimiter.setTargetFPS(fps);
         }
     };
     

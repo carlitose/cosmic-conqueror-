@@ -376,4 +376,49 @@ body {
     font-size: 16px;
     text-shadow: 1px 1px 2px black;
     z-index: 10;
+}
+
+.performance-options {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 20, 0.7);
+    text-align: center;
+}
+
+.performance-options h3 {
+    color: #ffcc00;
+    margin-bottom: 10px;
+    font-size: 1.2em;
+}
+
+.fps-selector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+}
+
+.fps-selector label {
+    color: #ddd;
+    font-weight: bold;
+}
+
+.fps-selector select {
+    background: rgba(10, 10, 40, 0.8);
+    color: #fff;
+    border: 1px solid #444;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+
+.fps-selector select:hover {
+    border-color: #888;
+}
+
+.fps-selector select:focus {
+    outline: none;
+    border-color: #ffcc00;
 } 
