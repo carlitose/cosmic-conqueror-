@@ -16,14 +16,27 @@ export class UniverseGenerator {
      * @param {number} planetsPerSystem - Numero di pianeti per sistema
      */
     generateUniverse(numSystems = 10, planetsPerSystem = 5) {
+        // Reset completo degli array di sistemi e pianeti per evitare duplicazioni
         this.systems = [];
         this.planets = [];
         
+        // Limita il numero di sistemi a un valore ragionevole
+        numSystems = Math.min(numSystems, 100);
+        planetsPerSystem = Math.min(planetsPerSystem, 10);
+        
+        console.log(`Generating universe with ${numSystems} systems and ${planetsPerSystem} planets per system`);
+        
+        // Crea un seme casuale per la generazione
+        this.seed = Math.random() * 10000;
+        
+        // Genera i sistemi stellari
         for (let i = 0; i < numSystems; i++) {
             const system = this.generateStarSystem(i, planetsPerSystem);
             this.systems.push(system);
             this.planets = this.planets.concat(system.planets);
         }
+        
+        console.log(`Universe created: ${this.systems.length} systems, ${this.planets.length} planets`);
         
         return {
             systems: this.systems,
@@ -190,7 +203,13 @@ export class UniverseGenerator {
      * @param {number} deltaTime - Tempo trascorso dall'ultimo aggiornamento
      */
     updatePlanetPositions(deltaTime) {
-        for (const planet of this.planets) {
+        // Controlliamo che esistano i pianeti prima di aggiornare
+        if (!this.planets || this.planets.length === 0) return;
+        
+        for (let i = 0; i < this.planets.length; i++) {
+            const planet = this.planets[i];
+            if (!planet) continue;  // Salta pianeti non validi
+            
             // Aggiorna angolo orbita
             planet.orbitAngle += planet.orbitSpeed * deltaTime;
             

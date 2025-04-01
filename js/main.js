@@ -807,7 +807,36 @@ function createUniverseVisuals(systems, planets) {
 
 // --- Creare pianeti con Level of Detail ---
 function createPlanetsWithLOD(planets, geometries) {
+    // Verifica che l'array planetMeshes sia inizializzato
+    if (!planetMeshes) planetMeshes = [];
+    
+    // Pulizia delle mesh pianeti esistenti prima di crearne di nuove
+    // per prevenire duplicazioni
+    planetMeshes.forEach(mesh => {
+        if (mesh && mesh.parent) {
+            mesh.parent.remove(mesh);
+        }
+    });
+    planetMeshes = [];
+    
+    // Aggiungi controllo di sicurezza
+    if (!planets || planets.length === 0) {
+        console.warn("Nessun pianeta da creare");
+        return;
+    }
+    
+    // Traccia gli ID dei pianeti già creati per evitare duplicati
+    const createdPlanetIds = new Set();
+    
     planets.forEach(planetData => {
+        // Salta i pianeti senza dati validi o già creati
+        if (!planetData || !planetData.id || createdPlanetIds.has(planetData.id)) {
+            return;
+        }
+        
+        // Registra questo pianeta come creato
+        createdPlanetIds.add(planetData.id);
+        
         // Seleziona texture in base al tipo di pianeta
         let diffuseTexture = null;
         let bumpTexture = null;
@@ -1212,18 +1241,26 @@ function updateActiveGameMode(delta) {
     switch (gameMode) {
         case 'space':
             // --- Update Universe ---
-            universeGenerator.updatePlanetPositions(delta * 10); // Accelera il movimento orbitale per visibilità
-            
-            // Ottimizzazione: aggiorna solo pianeti visibili o vicini al giocatore
-            planetMeshes.forEach(mesh => {
-                const distance = mesh.position.distanceTo(playerPos);
+            // Aggiorniamo solo le posizioni dei pianeti ESISTENTI, senza crearne di nuovi
+            if (universeGenerator && universeGenerator.planets && universeGenerator.planets.length > 0) {
+                universeGenerator.updatePlanetPositions(delta * 10); // Accelera il movimento orbitale per visibilità
                 
-                // Aggiorna sempre pianeti visibili
-                if (mesh.visible || distance < 500) {
-                    mesh.position.copy(mesh.userData.planetData.position);
-                    mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
-                }
-            });
+                // Ottimizzazione: aggiorna solo pianeti visibili o vicini al giocatore
+                planetMeshes.forEach(mesh => {
+                    if (!mesh || !mesh.userData || !mesh.userData.planetData) return; // Aggiungi controllo di sicurezza
+                    
+                    const distance = mesh.position.distanceTo(playerPos);
+                    
+                    // Aggiorna sempre pianeti visibili
+                    if (mesh.visible || distance < 500) {
+                        // Controllo di sicurezza per assicurarci che i dati del pianeta esistano
+                        if (mesh.userData.planetData.position) {
+                            mesh.position.copy(mesh.userData.planetData.position);
+                            mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
+                        }
+                    }
+                });
+            }
             
             // Aggiorna anche il modulo solare integrato
             if (solarSystem) {
