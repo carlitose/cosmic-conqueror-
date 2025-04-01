@@ -1248,7 +1248,30 @@ function setupPlanetMode() {
 // NUOVA FUNZIONE: Configura la modalità combattimento spaziale
 function setupSpaceCombatMode() {
     if (spaceCombat) {
-        spaceCombat.initialize(player.position.clone());
+        // Assicurati che player sia impostato correttamente
+        if (player && player.isObject3D) {
+            spaceCombat.player = player;
+        } else if (!spaceCombat.player || !spaceCombat.player.isObject3D) {
+            // Crea un player temporaneo se necessario
+            const tempPlayer = new THREE.Group();
+            tempPlayer.position.copy(player ? player.position : new THREE.Vector3());
+            tempPlayer.userData = {
+                health: 100,
+                maxHealth: 100,
+                attackPower: 10
+            };
+            tempPlayer.takeDamage = function(damage) {
+                this.userData.health = Math.max(0, this.userData.health - damage);
+                return this.userData.health > 0;
+            };
+            
+            spaceCombat.player = tempPlayer;
+            scene.add(tempPlayer);
+        }
+        
+        // Passa la posizione del giocatore all'inizializzazione
+        const playerPosition = player ? player.position.clone() : new THREE.Vector3();
+        spaceCombat.initialize(playerPosition);
         spaceCombat.activate();
     }
     // Altre configurazioni...
@@ -1309,7 +1332,7 @@ function initializeIntegratedModules() {
     // Inizializza i moduli singolarmente
     solarSystem = new SolarSystem(scene, gameOptions.solarSystem);
     terrainGenerator = new TerrainGenerator(scene, gameOptions.terrain);
-    spaceCombat = new SpaceCombat(scene, camera, gameOptions.spaceCombat);
+    spaceCombat = new SpaceCombat(scene, camera, player);
     groundCombat = new GroundCombat(scene, camera, gameOptions.groundCombat);
     
     // Inizializza il sistema di gestione centrale

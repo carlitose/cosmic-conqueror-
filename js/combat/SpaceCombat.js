@@ -37,10 +37,48 @@ export class SpaceCombat {
     
     /**
      * Inizializza il sistema di combattimento
+     * @param {THREE.Vector3} [playerPosition] - Posizione iniziale opzionale per il giocatore
      */
-    initialize() {
+    initialize(playerPosition) {
+        // Verifica che il player sia un oggetto Three.js valido
+        if (!this.player || !this.player.isObject3D) {
+            console.warn('Player not valid in SpaceCombat.initialize, creating temporary player');
+            
+            // Crea un player temporaneo
+            this.player = new THREE.Group();
+            this.player.userData = {
+                health: 100,
+                maxHealth: 100,
+                attackPower: 10
+            };
+            
+            this.player.takeDamage = function(damage) {
+                this.userData.health = Math.max(0, this.userData.health - damage);
+                console.log(`Player took ${damage} damage, health: ${this.userData.health}`);
+                return this.userData.health > 0;
+            };
+            
+            // Aggiungi al scene
+            if (this.scene) {
+                this.scene.add(this.player);
+            }
+        }
+        
+        // Imposta la posizione del player se fornita
+        if (playerPosition && playerPosition instanceof THREE.Vector3) {
+            this.player.position.copy(playerPosition);
+        }
+        
+        // Resetta lo stato del combattimento
+        this.enemies = [];
+        this.projectiles = [];
+        this.explosions = [];
+        this.enemiesDestroyed = 0;
+        
         // Creazione delle geometrie e materiali
         this.setupMaterials();
+        
+        console.log('SpaceCombat system initialized');
     }
     
     /**
@@ -386,19 +424,34 @@ export class SpaceCombat {
      * Controlla collisioni tra proiettili e oggetti
      */
     checkCollisions() {
+        // Controlla che il player sia un oggetto Three.js valido
+        if (!this.player || !this.player.isObject3D) {
+            console.warn('Player is not a valid Object3D');
+            return;
+        }
+        
         // Crea box del giocatore
         const playerBox = new THREE.Box3().setFromObject(this.player);
         
         // Controlla ogni proiettile
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const projectile = this.projectiles[i];
+            
+            // Controlla che il proiettile sia un oggetto Three.js valido
+            if (!projectile || !projectile.isObject3D) {
+                this.projectiles.splice(i, 1);
+                continue;
+            }
+            
             const projectileBox = new THREE.Box3().setFromObject(projectile);
             
             // Proiettili nemici vs giocatore
             if (projectile.userData.isEnemyProjectile) {
                 if (projectileBox.intersectsBox(playerBox)) {
                     // Danneggia giocatore
-                    this.player.takeDamage(projectile.userData.damage);
+                    if (typeof this.player.takeDamage === 'function') {
+                        this.player.takeDamage(projectile.userData.damage);
+                    }
                     
                     // Crea piccola esplosione
                     this.createExplosion(projectile.position, 1);
@@ -416,6 +469,12 @@ export class SpaceCombat {
                 
                 for (let j = 0; j < this.enemies.length; j++) {
                     const enemy = this.enemies[j];
+                    
+                    // Controlla che il nemico sia un oggetto Three.js valido
+                    if (!enemy || !enemy.isObject3D) {
+                        continue;
+                    }
+                    
                     const enemyBox = new THREE.Box3().setFromObject(enemy);
                     
                     if (projectileBox.intersectsBox(enemyBox)) {
@@ -426,6 +485,7 @@ export class SpaceCombat {
                             // Nemico distrutto
                             this.createExplosion(enemy.position, 3);
                             enemy.userData.isActive = false;
+                            this.enemiesDestroyed++;
                         } else {
                             // Piccola esplosione per hit
                             this.createExplosion(projectile.position, 1);
@@ -471,18 +531,40 @@ export class SpaceCombat {
      * @param {number} maxHealth - Salute massima del giocatore
      */
     setPlayerStats(attackPower, maxHealth) {
-        if (this.player) {
-            this.player.attackPower = attackPower || this.player.attackPower;
-            this.player.maxHealth = maxHealth || this.player.maxHealth;
-            this.player.health = this.player.maxHealth;
+        if (this.player && this.player.isObject3D) {
+            this.player.userData = this.player.userData || {};
+            this.player.userData.attackPower = attackPower || this.player.userData.attackPower || 10;
+            this.player.userData.maxHealth = maxHealth || this.player.userData.maxHealth || 100;
+            this.player.userData.health = this.player.userData.maxHealth;
+            
+            // Aggiungi metodo takeDamage se non esiste
+            if (typeof this.player.takeDamage !== 'function') {
+                this.player.takeDamage = function(damage) {
+                    this.userData.health = Math.max(0, this.userData.health - damage);
+                    console.log(`Player took ${damage} damage, health: ${this.userData.health}`);
+                    return this.userData.health;
+                };
+            }
         } else {
-            // Crea un oggetto player temporaneo se non esiste
-            this.player = {
+            // Crea un oggetto player temporaneo come Object3D valido
+            this.player = new THREE.Group();
+            this.player.userData = {
                 attackPower: attackPower || 10,
                 maxHealth: maxHealth || 100,
-                health: maxHealth || 100,
-                position: new THREE.Vector3()
+                health: maxHealth || 100
             };
+            
+            // Aggiungi metodo takeDamage
+            this.player.takeDamage = function(damage) {
+                this.userData.health = Math.max(0, this.userData.health - damage);
+                console.log(`Player took ${damage} damage, health: ${this.userData.health}`);
+                return this.userData.health;
+            };
+            
+            // Aggiungi al scene per garantire che sia nel grafo della scena
+            if (this.scene) {
+                this.scene.add(this.player);
+            }
         }
         
         console.log('Space combat player stats updated:', this.player);

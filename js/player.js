@@ -98,53 +98,65 @@ export class Player {
         // Resetta velocità
         this.velocity.set(0, 0, 0);
         
-        // Approccio semplificato: usiamo direttamente la direzione della camera
-        // per determinare il movimento forward/backward
+        // Ottieni la direzione attuale dalla telecamera (questa cambia con il movimento del mouse)
         const forward = cameraDirection.clone().normalize();
-        // Forziamo il movimento orizzontale annullando la componente Y
-        forward.y = 0;
-        forward.normalize();
         
-        // Calcola il vettore destro perpendicolare alla direzione forward
-        const right = new THREE.Vector3();
-        right.crossVectors(new THREE.Vector3(0, 1, 0), forward);
-        
-        // Applica movimento in base agli input
-        if (moveForward) {
-            // Quando premi W, vai nella direzione in cui stai guardando
-            this.velocity.add(forward.clone().multiplyScalar(actualSpeed));
-        }
-        if (moveBackward) {
-            // Quando premi S, vai nella direzione opposta
-            this.velocity.add(forward.clone().multiplyScalar(-actualSpeed));
-        }
-        if (moveLeft) {
-            // Quando premi A, vai a sinistra rispetto alla direzione in cui guardi
-            this.velocity.add(right.clone().multiplyScalar(actualSpeed));
-        }
-        if (moveRight) {
-            // Quando premi D, vai a destra rispetto alla direzione in cui guardi
-            this.velocity.add(right.clone().multiplyScalar(-actualSpeed));
-        }
-        
-        // Movimento verticale (volo)
         if (this.isFlying) {
+            // In modalità volo, usa la direzione completa della camera (inclusa componente Y)
+            // Applica movimento in base agli input nella direzione della telecamera
+            if (moveForward) {
+                this.velocity.add(forward.clone().multiplyScalar(actualSpeed));
+            }
+            if (moveBackward) {
+                this.velocity.add(forward.clone().multiplyScalar(-actualSpeed));
+            }
+            
+            // Calcola il vettore destro perpendicolare alla direzione forward
+            const right = new THREE.Vector3();
+            right.crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
+            
+            if (moveLeft) {
+                this.velocity.add(right.clone().multiplyScalar(actualSpeed));
+            }
+            if (moveRight) {
+                this.velocity.add(right.clone().multiplyScalar(-actualSpeed));
+            }
+            
+            // Calcola il vettore up in base alla direzione della camera
+            const up = new THREE.Vector3(0, 1, 0);
+            
+            // Movimento verticale (volo)
             if (moveUp) {
-                this.velocity.y = actualSpeed;
+                this.velocity.add(up.clone().multiplyScalar(actualSpeed));
             } else if (moveDown) {
-                this.velocity.y = -actualSpeed;
-            } else {
-                this.velocity.y = 0;
+                this.velocity.add(up.clone().multiplyScalar(-actualSpeed));
             }
         } else {
+            // In modalità non-volo, forziamo il movimento orizzontale
+            forward.y = 0;
+            forward.normalize();
+            
+            // Calcola il vettore destro perpendicolare alla direzione forward
+            const right = new THREE.Vector3();
+            right.crossVectors(new THREE.Vector3(0, 1, 0), forward);
+            
+            // Applica movimento in base agli input
+            if (moveForward) {
+                this.velocity.add(forward.clone().multiplyScalar(actualSpeed));
+            }
+            if (moveBackward) {
+                this.velocity.add(forward.clone().multiplyScalar(-actualSpeed));
+            }
+            if (moveLeft) {
+                this.velocity.add(right.clone().multiplyScalar(actualSpeed));
+            }
+            if (moveRight) {
+                this.velocity.add(right.clone().multiplyScalar(-actualSpeed));
+            }
+            
+            // A terra, non c'è movimento verticale
             this.velocity.y = 0;
         }
-        
-        // Debug info
-        console.log("Camera direction:", cameraDirection);
-        console.log("Forward vector:", forward);
-        console.log("Right vector:", right);
-        console.log("Velocity:", this.velocity);
         
         // Applica effettivamente il movimento
         this.position.add(this.velocity);
