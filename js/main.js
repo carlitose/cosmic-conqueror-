@@ -65,6 +65,95 @@ const closeLegendButton = document.getElementById('close-legend'); // <-- Nuovo:
 
 let isGameOver = false; // Flag per stato Game Over
 
+let projectilePool = []; // Pool di proiettili riutilizzabili
+const MAX_PROJECTILES = 50; // Numero massimo di proiettili simultanei
+let lastFrustumCheck = 0; // Timestamp dell'ultimo check del frustum
+let lastPhysicsUpdate = 0; // Timestamp dell'ultimo aggiornamento completo della fisica
+let collisionCache = new Map(); // Cache per la collision detection
+let audioPool = {}; // Pool di oggetti audio per il riutilizzo
+
+// --- Sound Functions ---
+function initAudioPool() {
+    // Definisci i suoni che verranno utilizzati di frequente
+    const sounds = {
+        'shoot': { src: 'public/sounds/shoot.mp3', instances: 5 },
+        'hit': { src: 'public/sounds/hit.mp3', instances: 5 },
+        'explosion': { src: 'public/sounds/explosion.mp3', instances: 3 }
+        // Aggiungi altri suoni secondo necessità
+    };
+    
+    // Per ogni tipo di suono, pre-carica multiple istanze
+    for (const [name, config] of Object.entries(sounds)) {
+        audioPool[name] = [];
+        
+        // Controlla se il browser supporta Web Audio API
+        if (!window.AudioContext && !window.webkitAudioContext) {
+            console.warn('Audio API non supportata dal browser');
+            return;
+        }
+        
+        for (let i = 0; i < config.instances; i++) {
+            try {
+                const audio = new Audio(config.src);
+                audio.preload = 'auto';
+                audio.load();
+                
+                // Aggiungi al pool
+                audioPool[name].push({
+                    element: audio,
+                    inUse: false
+                });
+            } catch (e) {
+                console.warn(`Impossibile caricare l'audio ${name}:`, e);
+            }
+        }
+    }
+}
+
+// Riproduci un suono dal pool
+function playSound(name, volume = 1.0) {
+    if (!audioPool[name] || audioPool[name].length === 0) {
+        return; // Suono non disponibile
+    }
+    
+    // Trova un'istanza audio non in uso
+    let audioInstance = audioPool[name].find(a => !a.inUse);
+    
+    // Se tutte le istanze sono in uso, usa la prima
+    if (!audioInstance) {
+        audioInstance = audioPool[name][0];
+        audioInstance.element.pause();
+        audioInstance.element.currentTime = 0;
+    }
+    
+    // Configura e riproduci
+    audioInstance.inUse = true;
+    audioInstance.element.volume = volume;
+    
+    // Riproduci con controllo degli errori
+    try {
+        const playPromise = audioInstance.element.play();
+        
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                // Riproduzione avviata con successo
+            }).catch(error => {
+                // Autoplay non consentito o altro errore
+                audioInstance.inUse = false;
+                console.warn('Errore riproduzione audio:', error);
+            });
+        }
+        
+        // Segna come disponibile quando finisce
+        audioInstance.element.onended = () => {
+            audioInstance.inUse = false;
+        };
+    } catch (e) {
+        audioInstance.inUse = false;
+        console.warn('Errore avvio riproduzione audio:', e);
+    }
+}
+
 // --- Initialization ---
 init();
 
@@ -229,6 +318,57 @@ function init() {
     } else {
         // Show Character Selection for normal start
         characterSelectionScreen.classList.remove('hidden');
+    }
+
+    // Inizializza il pool di proiettili
+    initProjectilePool();
+    
+    // Inizializza il pool audio
+    initAudioPool();
+}
+
+// --- Inizializza il pool di proiettili per il riutilizzo ---
+function initProjectilePool() {
+    // Pre-crea geometrie comuni per risparmiare memoria
+    const sphereGeo = new THREE.SphereGeometry(0.5, 8, 8);
+    const energyGeo = new THREE.SphereGeometry(0.5, 16, 8);
+    const laserGeo = new THREE.CylinderGeometry(0.1, 0.1, 1, 8);
+    
+    for (let i = 0; i < MAX_PROJECTILES; i++) {
+        // Crea materiali per diversi tipi di proiettili
+        const normalMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        const energyMat = new THREE.MeshBasicMaterial({ 
+            color: 0x00ffff, 
+            transparent: true, 
+            opacity: 0.8 
+        });
+        const laserMat = new THREE.MeshBasicMaterial({ 
+            color: 0xff0000, 
+            transparent: true, 
+            opacity: 0.9 
+        });
+        
+        // Crea mesh per diversi tipi di proiettili
+        const normalMesh = new THREE.Mesh(sphereGeo, normalMat);
+        const energyMesh = new THREE.Mesh(energyGeo, energyMat);
+        const laserMesh = new THREE.Mesh(laserGeo, laserMat);
+        
+        // Nascondi gli oggetti inizialmente
+        normalMesh.visible = false;
+        energyMesh.visible = false;
+        laserMesh.visible = false;
+        
+        // Aggiungi alla scena
+        scene.add(normalMesh);
+        scene.add(energyMesh);
+        scene.add(laserMesh);
+        
+        // Aggiungi al pool
+        projectilePool.push({
+            normal: { mesh: normalMesh, inUse: false },
+            energy: { mesh: energyMesh, inUse: false },
+            laser: { mesh: laserMesh, inUse: false }
+        });
     }
 }
 
@@ -420,8 +560,18 @@ function createUniverseVisuals(systems, planets) {
         });
     });
 
-    // Crea pianeti e le loro difese
+    // Usa Level of Detail (LOD) per i pianeti distanti
+    createPlanetsWithLOD(planets, planetGeometry);
+}
+
+// --- Creare pianeti con Level of Detail ---
+function createPlanetsWithLOD(planets, highDetailGeometry) {
     planets.forEach(planetData => {
+        // Crea geometrie a diversi livelli di dettaglio
+        const highLOD = highDetailGeometry;
+        const medLOD = new THREE.SphereGeometry(1, 32, 32);
+        const lowLOD = new THREE.SphereGeometry(1, 16, 16);
+        
         // Scegli texture in base al tipo di pianeta
         let diffuseTexture = null;
         let bumpTexture = null;
@@ -504,16 +654,33 @@ function createUniverseVisuals(systems, planets) {
             planetMaterial.bumpScale = 0.05;
         }
         
-        const planetMesh = new THREE.Mesh(planetGeometry, planetMaterial);
-        planetMesh.position.copy(planetData.position);
-        planetMesh.scale.setScalar(planetData.size * 2); // Scala per visibilità
-        planetMesh.castShadow = true;
-        planetMesh.receiveShadow = true;
-        planetMesh.userData.planetData = planetData; 
+        // Crea il LOD
+        const lod = new THREE.LOD();
+        
+        // Aggiungi i livelli
+        const highMesh = new THREE.Mesh(highLOD, planetMaterial);
+        const medMesh = new THREE.Mesh(medLOD, planetMaterial.clone());
+        const lowMesh = new THREE.Mesh(lowLOD, planetMaterial.clone());
+        
+        // Semplifica i materiali per i livelli più lontani
+        medMesh.material.bumpMap = null;
+        lowMesh.material.bumpMap = null;
+        
+        // Aggiungi i livelli al LOD, la distanza è relativa al diametro del pianeta
+        lod.addLevel(highMesh, 0);                         // Vicino
+        lod.addLevel(medMesh, planetData.size * 50);       // Medio
+        lod.addLevel(lowMesh, planetData.size * 150);      // Lontano
+        
+        // Posiziona il LOD
+        lod.position.copy(planetData.position);
+        lod.scale.setScalar(planetData.size * 2);
+        lod.userData.planetData = planetData;
+        lod.castShadow = true;
+        lod.receiveShadow = true;
         
         // Aggiungi atmosfera per certi tipi di pianeti
         if (planetData.type === 'gas' || planetData.type === 'ocean' || planetData.type === 'forest') {
-            const atmosphereGeometry = new THREE.SphereGeometry(1.015, 64, 64);
+            const atmosphereGeometry = new THREE.SphereGeometry(1.015, 32, 32);
             const atmosphereColor = planetData.type === 'gas' ? 0xffffcc : 0x8888ff;
             const atmosphereMaterial = new THREE.MeshPhongMaterial({
                 color: atmosphereColor,
@@ -525,45 +692,22 @@ function createUniverseVisuals(systems, planets) {
             });
             
             const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
-            atmosphere.scale.setScalar(planetData.size * 2);
-            planetMesh.add(atmosphere);
+            atmosphere.scale.setScalar(1);
+            highMesh.add(atmosphere.clone());
+            medMesh.add(atmosphere.clone());
+            // Non aggiungere l'atmosfera al modello lowLOD per risparmiare risorse
         }
         
         // Aggiungi anelli per pianeti gassosi grandi (come Saturno)
         if (planetData.type === 'gas' && planetData.size > 3) {
-            const ringsGeometry = new THREE.RingGeometry(1.5, 2.5, 64);
-            let ringsMaterial;
-            
-            try {
-                const ringTexture = new THREE.TextureLoader().load('public/textures/saturn-ring.png',
-                    undefined, undefined, function() { 
-                        console.warn('Texture saturn-ring.png non trovata, uso materiale semplice');
-                    });
-                    
-                ringsMaterial = new THREE.MeshPhongMaterial({
-                    map: ringTexture,
-                    transparent: true,
-                    opacity: 0.8,
-                    side: THREE.DoubleSide
-                });
-            } catch {
-                // Fallback a un materiale semplice se la texture non è disponibile
-                ringsMaterial = new THREE.MeshPhongMaterial({
-                    color: 0xcccccc,
-                    transparent: true,
-                    opacity: 0.6,
-                    side: THREE.DoubleSide
-                });
-            }
-            
-            const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
-            rings.rotation.x = Math.PI / 2;
-            rings.scale.setScalar(planetData.size * 2);
-            planetMesh.add(rings);
+            // Aggiungi gli anelli solo ai livelli di dettaglio alto e medio
+            addRingsToMesh(highMesh, 1);
+            addRingsToMesh(medMesh, 1);
+            // Non aggiungere anelli al modello lowLOD
         }
         
-        scene.add(planetMesh);
-        planetMeshes.push(planetMesh);
+        scene.add(lod);
+        planetMeshes.push(lod);
         
         // --- Genera Difese Planetarie ---
         if (!planetData.isConquered) {
@@ -596,6 +740,31 @@ function createUniverseVisuals(systems, planets) {
             }
         }
     });
+}
+
+// Funzione helper per aggiungere anelli ai pianeti
+function addRingsToMesh(mesh, scale) {
+    const ringsGeometry = new THREE.RingGeometry(1.5, 2.5, 32);
+    const ringsMaterial = new THREE.MeshPhongMaterial({
+        color: 0xcccccc,
+        transparent: true,
+        opacity: 0.6,
+        side: THREE.DoubleSide
+    });
+    
+    try {
+        const ringTexture = new THREE.TextureLoader().load('public/textures/saturn-ring.png');
+        if (ringTexture) {
+            ringsMaterial.map = ringTexture;
+        }
+    } catch (error) {
+        console.warn("Errore caricamento texture anelli:", error);
+    }
+    
+    const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
+    rings.rotation.x = Math.PI / 2;
+    rings.scale.setScalar(scale);
+    mesh.add(rings);
 }
 
 // --- Create Starfield Background ---
@@ -779,7 +948,17 @@ function animate() {
         return; 
     }
 
-    // --- Update Player --- 
+    // --- Throttling per task pesanti ---
+    // Suddividiamo le operazioni in vari frame per mantenere FPS costanti
+    
+    // --- Frustum Culling (ogni 500ms) ---
+    const shouldUpdateFrustum = time - lastFrustumCheck > 500;
+    if (shouldUpdateFrustum) {
+        updateFrustumCulling();
+        lastFrustumCheck = time;
+    }
+    
+    // --- Update Player (ogni frame) --- 
     const cameraDirection = new THREE.Vector3();
     camera.getWorldDirection(cameraDirection);
     player.update(delta, moveForward, moveBackward, moveLeft, moveRight, moveUp, moveDown, cameraDirection);
@@ -787,14 +966,88 @@ function animate() {
     // Mantieni la telecamera sincronizzata con la posizione del giocatore
     controls.getObject().position.copy(player.position);
 
-    // --- Update based on game mode ---
+    // --- Update specifici per modalità di gioco (ogni frame) ---
+    updateActiveGameMode(delta);
+
+    // --- Update Enemies (ogni frame per nemici vicini, throttled per lontani) ---
+    const playerPosition = player.position;
+    for (let i = activeEnemies.length - 1; i >= 0; i--) {
+        const enemy = activeEnemies[i];
+        if (!enemy.isActive) {
+            // Rimuovi nemico inattivo (distrutto)
+            enemy.removeFromScene(scene);
+            activeEnemies.splice(i, 1);
+            continue;
+        }
+        
+        // Distanza dal giocatore
+        const distance = enemy.mesh ? 
+            enemy.mesh.position.distanceTo(playerPosition) : 1000;
+            
+        // Aggiorna ogni frame se vicino, altrimenti con frequenza ridotta
+        const shouldUpdate = distance < 100 || // Sempre aggiorna i nemici vicini
+            (distance < 500 && time % 100 < 20) || // Aggiorna ogni 100ms quelli a media distanza
+            (time % 500 < 20); // Aggiorna ogni 500ms quelli lontani
+            
+        if (shouldUpdate) {
+            const enemyProjectileData = enemy.update(delta, player);
+            if (enemyProjectileData) {
+                createProjectile(enemyProjectileData);
+            }
+        }
+    }
+
+    // --- Update Projectiles (ogni frame per proiettili attivi) ---
+    updateProjectiles(delta);
+    
+    // --- Update Star Flares (ogni 100ms) ---
+    if (time % 100 < 20) {
+        updateStarFlares();
+    }
+
+    // --- Update Target Indicator ---
+    updateTargetIndicator();
+
+    // --- Check Interactions (ogni 200ms) ---
+    if (time % 200 < 20) {
+        checkPlanetInteraction();
+        checkPortalInteraction();
+    }
+
+    // --- Update UI (ogni 300ms) ---
+    if (time % 300 < 20) {
+        updateUI();
+    }
+
+    // --- Update gameIntegration (dipende dalla modalità) ---
+    if (gameIntegration && time % 100 < 20) {
+        gameIntegration.update(delta);
+    }
+
+    // --- Render Scene (ogni frame) ---
+    composer.render();
+    
+    prevTime = time;
+}
+
+// Function to update the active game mode
+function updateActiveGameMode(delta) {
+    const playerPos = player.position; // Sposta la dichiarazione fuori dai case
+    
     switch (gameMode) {
         case 'space':
             // --- Update Universe ---
             universeGenerator.updatePlanetPositions(delta * 10); // Accelera il movimento orbitale per visibilità
+            
+            // Ottimizzazione: aggiorna solo pianeti visibili o vicini al giocatore
             planetMeshes.forEach(mesh => {
-                mesh.position.copy(mesh.userData.planetData.position);
-                mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
+                const distance = mesh.position.distanceTo(playerPos);
+                
+                // Aggiorna sempre pianeti visibili
+                if (mesh.visible || distance < 500) {
+                    mesh.position.copy(mesh.userData.planetData.position);
+                    mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
+                }
             });
             
             // Aggiorna anche il modulo solare integrato
@@ -834,50 +1087,6 @@ function animate() {
             }
             break;
     }
-
-    // --- Update Enemies --- (solo in modalità appropriate)
-    if (gameMode === 'space' || gameMode === 'space-combat') {
-        for (let i = activeEnemies.length - 1; i >= 0; i--) {
-            const enemy = activeEnemies[i];
-            if (enemy.isActive) {
-                // enemy.update() ora ritorna i dati del proiettile se spara, altrimenti null.
-                const enemyProjectileData = enemy.update(delta, player); 
-                if (enemyProjectileData) {
-                    createProjectile(enemyProjectileData); // Crea proiettile nemico
-                }
-            } else {
-                // Rimuovi nemico inattivo (distrutto)
-                enemy.removeFromScene(scene);
-                activeEnemies.splice(i, 1);
-            }
-        }
-    }
-
-    // --- Update Projectiles ---
-    updateProjectiles(delta);
-    
-    // --- Update Star Flares --- (NUOVO)
-    updateStarFlares();
-
-    // --- Update Target Indicator ---
-    updateTargetIndicator();
-
-    // --- Check Interactions ---
-    checkPlanetInteraction();
-    checkPortalInteraction();
-
-    // --- Update UI ---
-    updateUI();
-
-    // --- Update gameIntegration ---
-    if (gameIntegration) {
-        gameIntegration.update(delta);
-    }
-
-    // --- Render Scene ---
-    composer.render();
-    
-    prevTime = time;
 }
 
 // --- Update Target Indicator ---
@@ -891,6 +1100,13 @@ function updateTargetIndicator() {
 
 // --- Update Functions ---
 function updateProjectiles(delta) {
+    const time = performance.now();
+    const doFullPhysics = time - lastPhysicsUpdate > 20; // Aggiorna la fisica completa ogni 20ms
+    
+    if (doFullPhysics) {
+        lastPhysicsUpdate = time;
+    }
+    
     for (let i = activeProjectiles.length - 1; i >= 0; i--) {
         const projectile = activeProjectiles[i];
         const moveDistance = projectile.speed * delta;
@@ -899,61 +1115,85 @@ function updateProjectiles(delta) {
 
         let hit = false;
 
-        // --- Collision Detection ---
-        if (projectile.isEnemyProjectile) {
-            // Proiettile nemico: controlla collisione con il giocatore
-            const playerCollider = new THREE.Box3().setFromCenterAndSize(player.position, new THREE.Vector3(2, 4, 2));
-            const projectileCollider = new THREE.Box3().setFromObject(projectile.mesh);
-
-            if (playerCollider.intersectsBox(projectileCollider)) {
-                console.log("Player hit!");
-                const playerAlive = player.takeDamage(projectile.power);
-                hit = true;
-                createHitEffect(projectile.mesh.position, 0xff0000);
-                if (!playerAlive) {
-                    handlePlayerDeath(); // <-- Chiama qui se il giocatore muore
-                }
-            }
-        } else {
-            // Proiettile giocatore: controlla collisione con i nemici
-            for (let j = activeEnemies.length - 1; j >= 0; j--) {
-                const enemy = activeEnemies[j];
-                if (!enemy.isActive || !enemy.mesh) continue;
-
-                const enemyCollider = new THREE.Box3().setFromObject(enemy.mesh);
+        // --- Ottimizzazione della detection delle collisioni ---
+        // Esegui la detection completa solo periodicamente o per proiettili vicini
+        if (doFullPhysics || projectile.distanceTraveled < 50) {
+            if (projectile.isEnemyProjectile) {
+                // Proiettile nemico: controlla collisione con il giocatore
+                // Usiamo direttamente intersectsBox senza cache per il giocatore (è un solo oggetto)
+                const playerCollider = new THREE.Box3().setFromCenterAndSize(
+                    player.position, 
+                    new THREE.Vector3(2, 4, 2)
+                );
                 const projectileCollider = new THREE.Box3().setFromObject(projectile.mesh);
-
-                if (enemyCollider.intersectsBox(projectileCollider)) {
-                    console.log("Enemy hit!");
-                    const enemyHitPosition = projectile.mesh.position.clone(); // Salva posizione impatto
-                    const enemyMeshScale = enemy.mesh.scale.x; // Per scalare l'esplosione
-                    const enemyStillAlive = enemy.takeDamage(projectile.power);
+                
+                if (playerCollider.intersectsBox(projectileCollider)) {
+                    console.log("Player hit!");
+                    const playerAlive = player.takeDamage(projectile.power);
                     hit = true;
-                    createHitEffect(enemyHitPosition, 0xffff00); // Effetto colpo giallo
-
-                    if (!enemyStillAlive) {
-                         // Il nemico è stato distrutto nel metodo takeDamage, 
-                         // verrà rimosso nel ciclo di update dei nemici.
-                         // --- Assegna Ricompense ---
-                         const expGained = enemy.type === 'drone' ? 10 : 25; // Più exp per le torrette
-                         const currencyGained = enemy.type === 'drone' ? 5 : 10;
-                         player.gainExperience(expGained);
-                         player.currency += currencyGained;
-                         console.log(`Enemy destroyed! Gained ${expGained} EXP and ${currencyGained} currency.`);
-                         createExplosionEffect(enemyHitPosition, enemyMeshScale); // Effetto esplosione
-                         // TODO: Mostrare feedback visivo/sonoro per la ricompensa
-                         // -------------------------
+                    createHitEffect(projectile.mesh.position, 0xff0000);
+                    playSound('hit', 0.7);
+                    
+                    if (!playerAlive) {
+                        handlePlayerDeath();
                     }
-                    break; // Un proiettile colpisce solo un nemico
+                }
+            } else {
+                // Ottimizza: controlla solo nemici vicini
+                for (let j = activeEnemies.length - 1; j >= 0; j--) {
+                    const enemy = activeEnemies[j];
+                    if (!enemy.isActive || !enemy.mesh) continue;
+                    
+                    // Calcola distanza approssimativa
+                    const distance = enemy.mesh.position.distanceTo(projectile.mesh.position);
+                    
+                    // Controlla solo se abbastanza vicino
+                    if (distance < 20) {
+                        const cacheKey = `proj_${i}_enemy_${j}`;
+                        
+                        // Usa la funzione ottimizzata
+                        if (optimizedCollisionCheck(enemy.mesh, projectile.mesh, cacheKey)) {
+                            console.log("Enemy hit!");
+                            const enemyHitPosition = projectile.mesh.position.clone();
+                            const enemyMeshScale = enemy.mesh.scale.x;
+                            const enemyStillAlive = enemy.takeDamage(projectile.power);
+                            hit = true;
+                            createHitEffect(enemyHitPosition, 0xffff00);
+                            playSound('hit', 0.5);
+                            
+                            if (!enemyStillAlive) {
+                                // Logica esistente per la distruzione dei nemici
+                                const expGained = enemy.type === 'drone' ? 10 : 25;
+                                const currencyGained = enemy.type === 'drone' ? 5 : 10;
+                                player.gainExperience(expGained);
+                                player.currency += currencyGained;
+                                createExplosionEffect(enemyHitPosition, enemyMeshScale);
+                                playSound('explosion', 0.6);
+                            }
+                            break;
+                        }
+                    }
                 }
             }
         }
 
         // Rimuovi proiettile se ha superato la portata o ha colpito qualcosa
         if (hit || projectile.distanceTraveled >= projectile.range) {
-            scene.remove(projectile.mesh);
+            // Invece di rimuovere, ricicliamo il proiettile
+            projectile.mesh.visible = false;
+            projectile.poolItem.inUse = false;
             activeProjectiles.splice(i, 1);
         } 
+    }
+    
+    // Pulisci periodicamente la cache delle collisioni (ogni 5 secondi)
+    if (time % 5000 < 20) {
+        const currentTime = performance.now();
+        for (const [key, value] of collisionCache.entries()) {
+            if (currentTime - value.timestamp > 5000) {
+                collisionCache.delete(key);
+            }
+        }
     }
 }
 
@@ -1188,46 +1428,77 @@ function onMouseDown(event) {
 
 // --- Game Logic Functions ---
 function createProjectile(data) {
-    let geometry, material;
-    let scale = 1;
-
-    if (data.type === 'energyWave') {
-        geometry = new THREE.SphereGeometry(data.width * 0.5, 16, 8);
-        material = new THREE.MeshBasicMaterial({ color: data.color, transparent: true, opacity: 0.8 });
-        scale = data.width;
-    } else if (data.type === 'laserEyes') {
-        geometry = new THREE.CylinderGeometry(0.1 * data.width, 0.1 * data.width, data.range, 8);
-        material = new THREE.MeshBasicMaterial({ color: data.color, transparent: true, opacity: 0.9 });
-        // Il laser viene gestito diversamente, forse con un Raycaster o una linea visiva
-        // Per ora, simuliamo con un proiettile molto veloce
-    } else { // Attacco energetico normale
-        geometry = new THREE.SphereGeometry(0.5, 8, 8);
-        material = new THREE.MeshBasicMaterial({ color: data.color });
-    }
-
-    const projectileMesh = new THREE.Mesh(geometry, material);
-    projectileMesh.position.copy(data.origin).addScaledVector(data.direction, 2); // Parte leggermente davanti al giocatore
-    projectileMesh.scale.setScalar(scale);
+    // Cerca un proiettile disponibile nel pool
+    let projectile = null;
+    let projectileType = 'normal';
     
-    // Orienta il cilindro del laser
-    if (data.type === 'laserEyes') {
+    if (data.type === 'energyWave') {
+        projectileType = 'energy';
+    } else if (data.type === 'laserEyes') {
+        projectileType = 'laser';
+    }
+    
+    // Trova un proiettile non utilizzato nel pool
+    for (let i = 0; i < projectilePool.length; i++) {
+        const poolItem = projectilePool[i][projectileType];
+        if (!poolItem.inUse) {
+            projectile = poolItem;
+            break;
+        }
+    }
+    
+    // Se non ci sono proiettili disponibili, non ne creiamo di nuovi
+    if (!projectile) {
+        console.warn('Limite di proiettili raggiunto');
+        return;
+    }
+    
+    // Configura il proiettile
+    const projectileMesh = projectile.mesh;
+    projectileMesh.visible = true;
+    projectileMesh.position.copy(data.origin).addScaledVector(data.direction, 2);
+    projectileMesh.material.color.set(data.color);
+    
+    // Scala il proiettile in base al tipo
+    if (projectileType === 'energy') {
+        projectileMesh.scale.setScalar(data.width);
+    } else if (projectileType === 'laser') {
+        projectileMesh.scale.set(data.width, data.range, data.width);
+        
+        // Orienta il cilindro del laser
         const targetPosition = new THREE.Vector3().copy(data.origin).addScaledVector(data.direction, data.range);
         projectileMesh.lookAt(targetPosition);
-        projectileMesh.rotateX(Math.PI / 2); // Correggi orientamento cilindro
-        projectileMesh.position.addScaledVector(data.direction, data.range / 2); // Posiziona al centro della traiettoria
+        projectileMesh.rotateX(Math.PI / 2);
+        projectileMesh.position.addScaledVector(data.direction, data.range / 2);
+    } else {
+        projectileMesh.scale.setScalar(1);
     }
-
-    scene.add(projectileMesh);
-
+    
+    // Marca come in uso
+    projectile.inUse = true;
+    
+    // Aggiungi all'array dei proiettili attivi
     activeProjectiles.push({
+        poolItem: projectile,
         mesh: projectileMesh,
         direction: data.direction,
         speed: data.speed,
         power: data.power,
         range: data.range,
         distanceTraveled: 0,
-        type: data.type
+        type: data.type,
+        isEnemyProjectile: data.isEnemyProjectile || false
     });
+    
+    // Riproduci suono appropriato
+    if (data.isEnemyProjectile) {
+        playSound('shoot', 0.3); // Volume più basso per proiettili nemici
+    } else {
+        // Volume basato sul tipo di attacco
+        const volume = data.type === 'energyWave' ? 0.8 : 
+                      (data.type === 'laserEyes' ? 0.6 : 0.4);
+        playSound('shoot', volume);
+    }
 }
 
 function attemptConquerPlanet() {
@@ -1659,4 +1930,74 @@ function updateStarFlares() {
             object.lookAt(camera.position);
         }
     });
+}
+
+// --- Frustum Culling ---
+function updateFrustumCulling() {
+    // Crea un frustum basato sulla camera
+    const frustum = new THREE.Frustum();
+    const matrix = new THREE.Matrix4().multiplyMatrices(
+        camera.projectionMatrix,
+        camera.matrixWorldInverse
+    );
+    frustum.setFromProjectionMatrix(matrix);
+    
+    // Controlla i pianeti
+    planetMeshes.forEach(planet => {
+        // Per i LOD, Three.js gestisce automaticamente quale livello mostrare
+        // Ma possiamo disabilitare completamente quelli fuori dal frustum
+        if (planet instanceof THREE.LOD) {
+            const planetPosition = planet.position;
+            const planetSize = planet.scale.x;
+            const boundingSphere = new THREE.Sphere(planetPosition, planetSize * 1.5);
+            
+            planet.visible = frustum.intersectsSphere(boundingSphere);
+        }
+    });
+    
+    // Controlla le stelle - disabilita quelle fuori dal frustum
+    starMeshes.forEach(star => {
+        const starPosition = star.position;
+        const starSize = star.scale.x;
+        const boundingSphere = new THREE.Sphere(starPosition, starSize);
+        
+        star.visible = frustum.intersectsSphere(boundingSphere);
+    });
+    
+    // Controlla i nemici - disabilita quelli fuori dal frustum
+    activeEnemies.forEach(enemy => {
+        if (enemy.mesh) {
+            const enemyPosition = enemy.mesh.position;
+            const boundingSphere = new THREE.Sphere(enemyPosition, 10); // Approssimazione
+            
+            enemy.mesh.visible = frustum.intersectsSphere(boundingSphere);
+        }
+    });
+}
+
+// --- Collision Optimization ---
+function optimizedCollisionCheck(object1, object2, cacheKey) {
+    // Usa la cache se disponibile e ancora valida
+    if (collisionCache.has(cacheKey)) {
+        const cachedResult = collisionCache.get(cacheKey);
+        // Usa il risultato in cache se è recente (meno di 100ms)
+        if (performance.now() - cachedResult.timestamp < 100) {
+            return cachedResult.intersects;
+        }
+    }
+    
+    // Calcola le bounding box
+    const box1 = new THREE.Box3().setFromObject(object1);
+    const box2 = new THREE.Box3().setFromObject(object2);
+    
+    // Controlla intersezione
+    const intersects = box1.intersectsBox(box2);
+    
+    // Aggiorna la cache
+    collisionCache.set(cacheKey, {
+        intersects: intersects,
+        timestamp: performance.now()
+    });
+    
+    return intersects;
 } 
