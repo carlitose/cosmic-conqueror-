@@ -185,8 +185,31 @@ function init() {
         return false; // Previeni comportamento di default
     };
 
-    // --- Show Character Selection ---
-    characterSelectionScreen.classList.remove('hidden');
+    // Verifica se l'utente arriva da un portale
+    const urlParams = new URLSearchParams(window.location.search);
+    const fromPortal = urlParams.get('portal') === 'true';
+    
+    if (fromPortal) {
+        // Skip character selection if coming from a portal
+        characterSelectionScreen.classList.add('hidden');
+        const username = urlParams.get('username') || 'Player';
+        const color = urlParams.get('color') || 'white';
+        const refUrl = urlParams.get('ref') || '';
+        
+        console.log('Player arriving from portal with data:', { username, color, refUrl });
+        
+        // Start game immediately with default or provided race
+        const raceFromParams = urlParams.get('race') || 'saiyan';
+        startGame(raceFromParams);
+        
+        // Create return portal pointing back to referrer
+        if (refUrl) {
+            createReturnPortal(refUrl);
+        }
+    } else {
+        // Show Character Selection for normal start
+        characterSelectionScreen.classList.remove('hidden');
+    }
 }
 
 // --- Create Target Indicator Arrow ---
@@ -371,6 +394,69 @@ function createExitPortal() {
     
     // Create portal collision box
     exitPortalBox = new THREE.Box3().setFromObject(exitPortalGroup);
+}
+
+// Create a return portal that points back to the referring game
+function createReturnPortal(refUrl) {
+    // Create portal group
+    returnPortalGroup = new THREE.Group();
+    // Position it behind the player's spawn point
+    returnPortalGroup.position.set(0, 10, 50); // Opposite to exit portal
+    
+    // Create portal effect
+    const returnPortalGeometry = new THREE.TorusGeometry(10, 1, 16, 100);
+    const returnPortalMaterial = new THREE.MeshPhongMaterial({
+        color: 0xff0000, // Red color to distinguish from exit portal
+        emissive: 0xff0000,
+        transparent: true,
+        opacity: 0.8
+    });
+    const returnPortal = new THREE.Mesh(returnPortalGeometry, returnPortalMaterial);
+    returnPortalGroup.add(returnPortal);
+    
+    // Create portal inner surface
+    const returnPortalInnerGeometry = new THREE.CircleGeometry(9, 32);
+    const returnPortalInnerMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        transparent: true,
+        opacity: 0.5,
+        side: THREE.DoubleSide
+    });
+    const returnPortalInner = new THREE.Mesh(returnPortalInnerGeometry, returnPortalInnerMaterial);
+    returnPortalGroup.add(returnPortalInner);
+    
+    // Add label
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 128;
+    context.fillStyle = '#ff0000';
+    context.font = 'bold 48px Arial';
+    context.textAlign = 'center';
+    
+    // Create a display name from the URL
+    let displayName = refUrl;
+    if (displayName.startsWith('http://')) displayName = displayName.substring(7);
+    if (displayName.startsWith('https://')) displayName = displayName.substring(8);
+    if (displayName.length > 20) displayName = displayName.substring(0, 20) + '...';
+    
+    context.fillText('RETURN TO ' + displayName.toUpperCase(), canvas.width/2, canvas.height/2);
+    const texture = new THREE.CanvasTexture(canvas);
+    const labelGeometry = new THREE.PlaneGeometry(20, 5);
+    const labelMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        side: THREE.DoubleSide
+    });
+    const label = new THREE.Mesh(labelGeometry, labelMaterial);
+    label.position.y = 15;
+    returnPortalGroup.add(label);
+    
+    // Add portal to scene
+    scene.add(returnPortalGroup);
+    
+    // Create portal collision box
+    returnPortalBox = new THREE.Box3().setFromObject(returnPortalGroup);
 }
 
 // --- Animation Loop ---
@@ -560,15 +646,14 @@ function checkPlanetInteraction() {
 }
 
 function checkPortalInteraction() {
-    if (!exitPortalBox) return;
-    
-    // Usa una collision box semplice per il giocatore
+    // Create a simple collision box for the player
     const playerCollider = new THREE.Box3().setFromCenterAndSize(
         player.position,
-        new THREE.Vector3(2, 4, 2) // Dimensioni approssimative del giocatore
+        new THREE.Vector3(2, 4, 2) // Approximate player dimensions
     );
-
-    if (playerCollider.intersectsBox(exitPortalBox)) {
+    
+    // Check exit portal interaction
+    if (exitPortalBox && playerCollider.intersectsBox(exitPortalBox)) {
         // --- Redirect Logic ---
         const playerData = player.getPortalData();
         const currentParams = new URLSearchParams(window.location.search);
@@ -577,12 +662,12 @@ function checkPortalInteraction() {
         newParams.append('portal', 'true');
         newParams.append('ref', window.location.host + window.location.pathname);
 
-        // Aggiungi dati giocatore
+        // Add player data
         for (const key in playerData) {
             newParams.append(key, playerData[key]);
         }
 
-        // Mantieni altri parametri rilevanti (se ce ne sono)
+        // Keep other relevant parameters (if any)
         for (const [key, value] of currentParams) {
             if (!newParams.has(key) && key !== 'ref' && key !== 'portal') {
                 newParams.append(key, value);
@@ -593,7 +678,42 @@ function checkPortalInteraction() {
         window.location.href = 'http://portal.pieter.com' + (paramString ? '?' + paramString : '');
     }
     
-    // TODO: Aggiungere logica per il return portal
+    // Check return portal interaction
+    if (returnPortalBox && playerCollider.intersectsBox(returnPortalBox)) {
+        // Get ref from URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        const refUrl = urlParams.get('ref');
+        if (refUrl) {
+            // Add https if not present
+            let url = refUrl;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            
+            // Forward all current parameters except 'ref'
+            const currentParams = new URLSearchParams(window.location.search);
+            const newParams = new URLSearchParams();
+            
+            // Add player data
+            const playerData = player.getPortalData();
+            for (const key in playerData) {
+                newParams.append(key, playerData[key]);
+            }
+            
+            // Keep portal flag
+            newParams.append('portal', 'true');
+            
+            // Keep other relevant parameters
+            for (const [key, value] of currentParams) {
+                if (!newParams.has(key) && key !== 'ref') {
+                    newParams.append(key, value);
+                }
+            }
+            
+            const paramString = newParams.toString();
+            window.location.href = url + (paramString ? '?' + paramString : '');
+        }
+    }
 }
 
 function updateUI() {

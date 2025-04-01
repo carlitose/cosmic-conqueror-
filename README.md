@@ -1,59 +1,80 @@
 # Portal Game - Vibe Jam 2025
 
-A simple 3D game with portals implemented for Vibe Jam 2025. Navigate through the virtual space and enter portals to travel to other games.
+A space exploration and planetary conquest game with portals connecting to the Vibeverse.
 
-## Features
+## Game Concept
 
-- **Instant Play**: No loading screens, signups, or logins required
-- **Portal System**: Enter portals to navigate to other games in the Vibeverse
-- **Return Portals**: When coming from another game, a return portal is created to go back
-- **Parameter Passing**: Player information is passed between games via URL parameters
+Cosmic Conqueror is a game where you explore space, conquer planets, and fight against planetary defenses. The game supports two distinct modes:
 
-## Controls
+1. **Space Exploration**: Navigate between star systems, planets, and engage in space combat.
+2. **Planetary Exploration**: Land on planets and explore procedurally generated terrains.
 
-- **W / Up Arrow**: Move forward
-- **A / Left Arrow**: Move left
-- **S / Down Arrow**: Move backward
-- **D / Right Arrow**: Move right
+The game includes the portals from Vibe Jam 2025 that allow players to travel to other games.
 
-## Portal System
+## Architecture
 
-### Exit Portal (Green)
-- Leads to the main Vibeverse hub at portal.pieter.com
-- Passes player information via URL parameters
+The project is structured into separate modules:
 
-### Return Portal (Blue)
-- Only appears when the player arrives via another portal
-- Returns the player to the game they came from
-- Preserves player information
+- **core**: Core game system, UI, event management, state management
+- **space**: Space navigation, star systems, planets
+- **planet**: Procedural terrain generation, terrestrial physics
+- **combat**: Combat systems (both space and planetary)
+- **player**: Player management, statistics, inventory, progression
+- **portals**: Portal system for Vibe Jam
 
-### Entry Portal (Red)
-- Appears at the player's spawn location when coming from another portal
+## Main Components
 
-## URL Parameters
+### Space (based on KyleGough/solar-system)
+- 3D visualization of the star system
+- Planets with textures and orbits
+- Space navigation
+- Points of interest on planets
 
-The game supports the following URL parameters:
-- `username`: Player's username
-- `color`: Player's color (hex or simple color name)
-- `speed`: Movement speed in meters per second
-- `ref`: URL of the game the player came from
-- `portal`: Set to 'true' when coming from a portal
+### Terrains (based on obecerra3/OpenWorldJS)
+- Procedural terrain generation with GPGPU
+- Physics with Ammo.js
+- First/third-person controls
 
-Additional supported parameters:
-- `avatar_url`: URL to player's avatar image
-- `team`: Player's team name
-- `speed_x`, `speed_y`, `speed_z`: Directional speed components
-- `rotation_x`, `rotation_y`, `rotation_z`: Player rotation
+### Combat (based on mohsenheydari/three-fps and Louis-Tarvin/threejs-game)
+- FPS combat system on planets
+- Space combat system with flight/weapon modes
+- Artificial intelligence for enemies
 
-## Development
+### Vibe Jam Requirements
+- Entry portal (created when a user arrives from another game)
+- Exit portal (to go to other games)
+- Parameter passing between portals
 
-This game is built using Three.js and vanilla JavaScript. It doesn't require any build tools or preprocessing.
+## How to Play
 
-## Vibe Jam 2025 Requirements
+- WASD/Arrow Keys: Movement
+- Mouse: Look around
+- Left Click: Primary attack
+- Right Click: Special attack
+- Space: Toggle flight
+- Keys 1-9: Change weapons/abilities
+- U: Upgrade menu
+- H: Control legend
 
-- ✅ Game is at least 80% written by AI
-- ✅ Game is instantly playable on web without logins or signups
-- ✅ Game is free-to-play
-- ✅ Game loads instantly without loading screens
-- ✅ Game includes the required Vibe Jam badge
-- ✅ Game includes portal functionality 
+## Development Plan
+
+1. Integrate space navigation from the solar system model
+2. Integrate terrain generation from OpenWorldJS
+3. Implement transition between space and planetary modes
+4. Add space and ground combat
+5. Optimize performance and refine user experience
+
+## Technologies
+
+- Three.js for 3D graphics
+- Ammo.js for physics
+- WebGL Shaders for visual effects and procedural generation
+- Modular JavaScript for game architecture
+
+## Credits
+
+This project combines elements from the following open-source projects:
+- [Solar System Model](https://github.com/KyleGough/solar-system) by Kyle Gough
+- [OpenWorldJS](https://github.com/obecerra3/OpenWorldJS) by obecerra3
+- [Three-FPS](https://github.com/mohsenheydari/three-fps) by Mohsen Heydari
+- [ThreeJS-Game](https://github.com/Louis-Tarvin/threejs-game) by Louis Tarvin 
