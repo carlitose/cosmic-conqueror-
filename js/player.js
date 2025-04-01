@@ -456,4 +456,134 @@ export class Player {
         
         return false;
     }
+
+    /**
+     * Imposta le proprietà specifiche della razza
+     * @param {string} race - La razza del personaggio ('saiyan' o 'viltrumite')
+     */
+    setRace(race) {
+        this.race = race;
+        
+        if (race === 'saiyan') {
+            this.attackType = 'energy';
+            this.attackColor = 0x3e78ff;
+            this.specialAttackType = 'energyWave';
+            this.specialAttackColor = 0x3e78ff;
+            this.energyRegenRate = 0.2;
+            this.healthRegenRate = 0.05;
+            
+            // Aggiorna il materiale della mesh se esiste
+            if (this.mesh) {
+                this.mesh.material.color.setHex(0x3e78ff);
+                this.mesh.material.emissive.setHex(0x1a1a5a);
+            }
+        } else if (race === 'viltrumite') {
+            this.attackType = 'physical';
+            this.attackColor = 0xff3e3e;
+            this.specialAttackType = 'laserEyes';
+            this.specialAttackColor = 0xff3e3e;
+            this.energyRegenRate = 0.1;
+            this.healthRegenRate = 0.1;
+            
+            // Aggiorna il materiale della mesh se esiste
+            if (this.mesh) {
+                this.mesh.material.color.setHex(0xff3e3e);
+                this.mesh.material.emissive.setHex(0x5a1a1a);
+            }
+        }
+    }
+
+    /**
+     * Riporta il personaggio allo stato iniziale
+     */
+    reset() {
+        this.health = this.maxHealth;
+        this.energy = this.maxEnergy;
+        this.position.set(0, 10, 0);
+        this.rotation.set(0, 0, 0);
+        this.velocity.set(0, 0, 0);
+        this.isFlying = false;
+        
+        if (this.mesh) {
+            this.mesh.position.copy(this.position);
+            this.mesh.rotation.copy(this.rotation);
+        }
+    }
+
+    /**
+     * Usa un oggetto dall'inventario
+     * @param {string} itemId - ID dell'oggetto da usare
+     * @returns {boolean} - True se l'oggetto è stato usato con successo
+     */
+    useItem(itemId) {
+        const itemIndex = this.inventory.findIndex(item => item.id === itemId);
+        if (itemIndex === -1) return false;
+        
+        const item = this.inventory[itemIndex];
+        
+        // Applica gli effetti dell'oggetto
+        switch(item.type) {
+            case 'healthPotion':
+                this.health = Math.min(this.maxHealth, this.health + item.value);
+                break;
+            case 'energyPotion':
+                this.energy = Math.min(this.maxEnergy, this.energy + item.value);
+                break;
+            case 'powerBoost':
+                this.attackPower *= item.multiplier;
+                setTimeout(() => {
+                    this.attackPower /= item.multiplier;
+                }, item.duration);
+                break;
+            default:
+                return false;
+        }
+        
+        // Rimuovi l'oggetto dall'inventario se è consumabile
+        if (item.consumable) {
+            this.inventory.splice(itemIndex, 1);
+        }
+        
+        return true;
+    }
+
+    /**
+     * Equipaggia un oggetto
+     * @param {string} itemId - ID dell'oggetto da equipaggiare
+     * @returns {boolean} - True se l'oggetto è stato equipaggiato con successo
+     */
+    equipItem(itemId) {
+        const item = this.inventory.find(i => i.id === itemId);
+        if (!item || !item.equippable) return false;
+        
+        // Rimuovi l'oggetto precedentemente equipaggiato dello stesso tipo
+        const currentEquipped = this.inventory.find(i => 
+            i.equipped && i.slot === item.slot
+        );
+        if (currentEquipped) {
+            currentEquipped.equipped = false;
+        }
+        
+        // Equipaggia il nuovo oggetto
+        item.equipped = true;
+        
+        // Applica i bonus dell'oggetto
+        if (item.stats) {
+            Object.entries(item.stats).forEach(([stat, value]) => {
+                switch(stat) {
+                    case 'attackPower':
+                        this.attackPower += value;
+                        break;
+                    case 'defense':
+                        this.maxHealth += value;
+                        break;
+                    case 'speed':
+                        this.speed += value;
+                        break;
+                }
+            });
+        }
+        
+        return true;
+    }
 } 

@@ -506,25 +506,108 @@ export class SpaceCombat {
     }
     
     /**
-     * Crea un'onda di nemici basata sulla posizione del giocatore
-     * @param {THREE.Vector3} playerPosition - Posizione del giocatore
+     * Verifica se il combattimento è completo
+     * @returns {boolean} True se il combattimento è finito
      */
-    spawnEnemyWave(playerPosition) {
-        const spawnRadius = 300;
-        const enemyCount = Math.floor(Math.random() * 3) + 2; // 2-4 nemici per ondata
-        
-        for (let i = 0; i < enemyCount; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const enemyPos = new THREE.Vector3(
-                playerPosition.x + Math.cos(angle) * spawnRadius,
-                playerPosition.y + (Math.random() - 0.5) * 100,
-                playerPosition.z + Math.sin(angle) * spawnRadius
-            );
-            
-            this.spawnEnemy(Math.random() < 0.7 ? 'fighter' : 'bomber', enemyPos);
+    isCombatComplete() {
+        // Verifica se ci sono ancora nemici attivi
+        const activeEnemies = this.enemies.filter(enemy => enemy.userData.isActive);
+        if (activeEnemies.length === 0) {
+            return true;
         }
+        
+        // Verifica se il tempo di combattimento è scaduto
+        if (this._combatDuration > 180) { // 3 minuti
+            return true;
+        }
+        
+        return false;
     }
     
+    /**
+     * Attiva il sistema di combattimento spaziale
+     */
+    activate() {
+        this.active = true;
+        console.log("Combattimento spaziale attivato");
+    }
+    
+    /**
+     * Disattiva il sistema di combattimento e pulisce gli elementi
+     */
+    deactivate() {
+        this.active = false;
+        
+        // Rimuovi tutti i proiettili
+        this.projectiles.forEach(projectile => {
+            this.scene.remove(projectile);
+        });
+        this.projectiles = [];
+        
+        // Rimuovi tutte le esplosioni
+        this.explosions.forEach(explosion => {
+            this.scene.remove(explosion);
+        });
+        this.explosions = [];
+        
+        // Rimuovi tutti i nemici
+        this.enemies.forEach(enemy => {
+            this.scene.remove(enemy);
+        });
+        this.enemies = [];
+        
+        // Resetta il tempo di combattimento
+        this._combatDuration = 0;
+        
+        // Rimuovi eventuali effetti particellari
+        this.scene.children.forEach(child => {
+            if (child.userData.isEffect) {
+                this.scene.remove(child);
+            }
+        });
+        
+        console.log("Combattimento spaziale disattivato");
+    }
+
+    /**
+     * Genera una nuova ondata di nemici
+     * @param {THREE.Vector3} playerPosition - Posizione del giocatore
+     */
+    spawnEnemyWave() {
+        const playerPosition = this.player.position;
+        const waveSize = Math.min(3 + Math.floor(this.difficulty * 1.5), 10);
+        const spawnRadius = 100;
+        
+        for (let i = 0; i < waveSize; i++) {
+            // Calcola una posizione casuale intorno al giocatore
+            const angle = (i / waveSize) * Math.PI * 2;
+            const distance = spawnRadius + (Math.random() - 0.5) * 40;
+            
+            const position = new THREE.Vector3(
+                playerPosition.x + Math.cos(angle) * distance,
+                playerPosition.y + (Math.random() - 0.5) * 20,
+                playerPosition.z + Math.sin(angle) * distance
+            );
+            
+            // Scegli casualmente il tipo di nemico in base alla difficoltà
+            let enemyType;
+            const roll = Math.random();
+            
+            if (this.difficulty >= 3 && roll < 0.2) {
+                enemyType = 'cruiser';
+            } else if (this.difficulty >= 2 && roll < 0.4) {
+                enemyType = 'bomber';
+            } else {
+                enemyType = 'fighter';
+            }
+            
+            this.spawnEnemy(position, enemyType);
+        }
+        
+        // Aumenta leggermente la difficoltà per la prossima ondata
+        this.difficulty += 0.2;
+    }
+
     /**
      * Imposta statistiche del giocatore da sistema esterno
      * @param {number} attackPower - Potenza d'attacco del giocatore
@@ -568,44 +651,6 @@ export class SpaceCombat {
         }
         
         console.log('Space combat player stats updated:', this.player);
-    }
-    
-    /**
-     * Verifica se il combattimento è completo
-     * @returns {boolean} True se il combattimento è finito
-     */
-    isCombatComplete() {
-        // Considera il combattimento completato se non ci sono più nemici
-        // o se altre condizioni specifiche sono soddisfatte
-        if (this.enemies && this.enemies.length === 0) {
-            return true;
-        }
-        
-        // Più nemici distrutti rispetto a quelli vivi
-        if (this.enemiesDestroyed && this.enemies) {
-            const ratio = this.enemiesDestroyed / (this.enemies.length || 1);
-            if (ratio > 3) { // Se hai distrutto 3 volte più nemici di quelli ancora presenti
-                return true;
-            }
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Attiva il sistema di combattimento spaziale
-     */
-    activate() {
-        this.active = true;
-        console.log("Combattimento spaziale attivato");
-    }
-    
-    /**
-     * Disattiva il sistema di combattimento spaziale
-     */
-    deactivate() {
-        this.active = false;
-        console.log("Combattimento spaziale disattivato");
     }
 }
  

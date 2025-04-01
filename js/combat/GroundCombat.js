@@ -167,21 +167,220 @@ class GroundCombat {
      * Update player movement based on input
      */
     updatePlayerMovement() {
-        // To be implemented
+        if (!this.active || !this.playerState) return;
+
+        const moveSpeed = this.keys.sprint ? 
+            this.options.playerSpeed * 1.5 : 
+            this.options.playerSpeed;
+
+        // Get camera direction for movement relative to view
+        const cameraDirection = new THREE.Vector3();
+        this.camera.getWorldDirection(cameraDirection);
+        cameraDirection.y = 0;
+        cameraDirection.normalize();
+
+        // Calculate forward and right vectors
+        const forward = cameraDirection;
+        const right = new THREE.Vector3();
+        right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+        // Reset velocity
+        this.playerState.velocity.x = 0;
+        this.playerState.velocity.z = 0;
+
+        // Apply movement based on input
+        if (this.keys.forward) {
+            this.playerState.velocity.add(forward.multiplyScalar(moveSpeed));
+        }
+        if (this.keys.backward) {
+            this.playerState.velocity.sub(forward.multiplyScalar(moveSpeed));
+        }
+        if (this.keys.right) {
+            this.playerState.velocity.add(right.multiplyScalar(moveSpeed));
+        }
+        if (this.keys.left) {
+            this.playerState.velocity.sub(right.multiplyScalar(moveSpeed));
+        }
+
+        // Handle jumping
+        if (this.keys.jump && this.playerState.onGround) {
+            this.playerState.velocity.y = this.options.jumpForce;
+            this.playerState.onGround = false;
+        }
+
+        // Apply gravity
+        if (!this.playerState.onGround) {
+            this.playerState.velocity.y += this.options.gravity * 0.016; // Assume 60fps
+        }
+
+        // Update position
+        this.playerState.position.add(this.playerState.velocity);
+
+        // Update player mesh and camera
+        this.playerMesh.position.copy(this.playerState.position);
+        this.camera.position.copy(this.playerState.position);
+        this.camera.position.y += this.options.playerHeight * 0.8; // Eye level
     }
 
     /**
      * Update projectiles and effects
      */
     updateProjectiles() {
-        // To be implemented
+        const projectilesToRemove = [];
+
+        // Update projectile positions
+        this.projectiles.forEach((projectile, index) => {
+            projectile.position.add(projectile.velocity);
+            projectile.lifetime -= 0.016; // Assume 60fps
+
+            // Check if projectile should be removed
+            if (projectile.lifetime <= 0) {
+                projectilesToRemove.push(index);
+            }
+
+            // Check terrain collision
+            const terrainHeight = this.physics.getTerrainHeight(projectile.position);
+            if (projectile.position.y <= terrainHeight) {
+                this.createImpact(projectile.position.clone());
+                projectilesToRemove.push(index);
+            }
+        });
+
+        // Remove dead projectiles
+        for (let i = projectilesToRemove.length - 1; i >= 0; i--) {
+            const index = projectilesToRemove[i];
+            const projectile = this.projectiles[index];
+            this.scene.remove(projectile);
+            this.projectiles.splice(index, 1);
+        }
+
+        // Update impact effects
+        this.impacts = this.impacts.filter(impact => {
+            impact.lifetime -= 0.016;
+            if (impact.lifetime <= 0) {
+                this.scene.remove(impact);
+                return false;
+            }
+            impact.material.opacity = impact.lifetime;
+            return true;
+        });
+
+        // Update muzzle flashes
+        this.muzzleFlashes = this.muzzleFlashes.filter(flash => {
+            flash.lifetime -= 0.016;
+            if (flash.lifetime <= 0) {
+                this.scene.remove(flash);
+                return false;
+            }
+            flash.material.opacity = flash.lifetime * 2;
+            return true;
+        });
     }
 
     /**
      * Check for collisions between entities
      */
     checkCollisions() {
-        // To be implemented
+        if (!this.active) return;
+
+        const playerRadius = 0.5;
+        const playerPosition = this.playerState.position;
+
+        // Check projectile collisions with enemies
+        this.projectiles.forEach((projectile, projectileIndex) => {
+            if (projectile.isEnemy) return; // Skip enemy projectiles
+
+            this.enemies.enemies.forEach((enemy, enemyIndex) => {
+                const distance = projectile.position.distanceTo(enemy.position);
+                if (distance < enemy.radius) {
+                    // Hit enemy
+                    enemy.takeDamage(projectile.damage);
+                    this.createImpact(projectile.position.clone());
+                    this.scene.remove(projectile);
+                    this.projectiles.splice(projectileIndex, 1);
+
+                    if (enemy.health <= 0) {
+                        this.enemies.removeEnemy(enemyIndex);
+                    }
+                }
+            });
+        });
+
+        // Check enemy projectiles with player
+        this.projectiles.forEach((projectile, index) => {
+            if (!projectile.isEnemy) return; // Skip player projectiles
+
+            const distance = projectile.position.distanceTo(playerPosition);
+            if (distance < playerRadius) {
+                // Hit player
+                this.playerState.hitPoints -= projectile.damage;
+                this.createImpact(projectile.position.clone());
+                this.scene.remove(projectile);
+                this.projectiles.splice(index, 1);
+
+                // Emit hit event
+                this.emit('playerHit', {
+                    damage: projectile.damage,
+                    currentHealth: this.playerState.hitPoints
+                });
+
+                if (this.playerState.hitPoints <= 0) {
+                    this.emit('playerDeath');
+                }
+            }
+        });
+
+        // Check player collision with enemies (melee range)
+        this.enemies.enemies.forEach(enemy => {
+            const distance = enemy.position.distanceTo(playerPosition);
+            if (distance < enemy.meleeRange + playerRadius) {
+                // Enemy can attack player
+                if (enemy.canMeleeAttack()) {
+                    this.playerState.hitPoints -= enemy.meleeDamage;
+                    enemy.performMeleeAttack();
+
+                    // Emit hit event
+                    this.emit('playerHit', {
+                        damage: enemy.meleeDamage,
+                        currentHealth: this.playerState.hitPoints
+                    });
+
+                    if (this.playerState.hitPoints <= 0) {
+                        this.emit('playerDeath');
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Create an impact effect at the specified position
+     * @param {THREE.Vector3} position - Position of the impact
+     */
+    createImpact(position) {
+        const impactGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+        const impactMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffff00,
+            transparent: true,
+            opacity: 1
+        });
+
+        const impact = new THREE.Mesh(impactGeometry, impactMaterial);
+        impact.position.copy(position);
+        impact.lifetime = 0.5; // Half second
+
+        this.scene.add(impact);
+        this.impacts.push(impact);
+    }
+
+    /**
+     * Emit an event to the event system
+     * @param {string} eventName - Name of the event
+     * @param {Object} data - Event data
+     */
+    emit(eventName, data) {
+        const event = new CustomEvent(eventName, { detail: data });
+        document.dispatchEvent(event);
     }
 
     /**

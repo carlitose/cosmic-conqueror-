@@ -1,4 +1,5 @@
 import { KEYS } from './constants.js';
+import * as THREE from 'three';
 
 /**
  * Modulo per gestire i controlli del giocatore
@@ -103,11 +104,16 @@ function onKeyUp(event) {
 function onMouseDown(event) {
     if (!controls?.isLocked) return;
     
+    // Calcola la direzione dell'attacco basata sulla direzione della camera
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    
     // Questi eventi saranno intercettati e gestiti dal main
     // tramite callback o event emitter nel sistema completo
     const attackEvent = new CustomEvent('player-attack', {
         detail: {
             button: event.button,
+            direction: direction,
             timestamp: performance.now()
         }
     });
@@ -152,5 +158,34 @@ export function disposeControls() {
         document.removeEventListener('keyup', onKeyUp);
         document.removeEventListener('mousedown', onMouseDown);
         controls = null;
+    }
+}
+
+/**
+ * Imposta la modalità di controllo
+ * @param {string} mode - La modalità di controllo ('normal', 'flying', 'combat')
+ */
+export function setMode(mode) {
+    switch(mode) {
+        case 'normal':
+            // Modalità normale: movimento orizzontale
+            movementState.up = false;
+            movementState.down = false;
+            break;
+            
+        case 'flying':
+            // Modalità volo: movimento completo 3D
+            // Non serve fare nulla, tutti i movimenti sono già abilitati
+            break;
+            
+        case 'combat':
+            // Modalità combattimento: movimento limitato
+            movementState.up = false;
+            movementState.down = false;
+            // Qui potresti anche limitare la velocità o altri parametri
+            break;
+            
+        default:
+            console.warn(`Modalità controllo non riconosciuta: ${mode}`);
     }
 } 

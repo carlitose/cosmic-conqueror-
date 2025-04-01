@@ -504,4 +504,247 @@ export class WorldManager {
         
         console.log(`Focalizzato su pianeta: ${planetMesh.userData.planetData.name}`);
     }
+
+    /**
+     * Aggiorna il frustum culling in base alla posizione della camera
+     * @param {THREE.Camera} camera - La camera del gioco
+     * @param {boolean} isLowQuality - Se true, usa LOD di qualità inferiore
+     */
+    updateFrustumCulling(camera, isLowQuality) {
+        const frustum = new THREE.Frustum();
+        frustum.setFromProjectionMatrix(
+            new THREE.Matrix4().multiplyMatrices(
+                camera.projectionMatrix,
+                camera.matrixWorldInverse
+            )
+        );
+
+        // Aggiorna visibilità e LOD dei pianeti
+        this.planetMeshes.forEach(planetMesh => {
+            const distance = camera.position.distanceTo(planetMesh.position);
+            const isVisible = frustum.containsPoint(planetMesh.position);
+            
+            planetMesh.visible = isVisible;
+            
+            if (isVisible) {
+                // Seleziona il livello di dettaglio appropriato
+                if (isLowQuality) {
+                    planetMesh.geometry = distance < 1000 ? 
+                        this.planetLODGeometries.low : 
+                        this.planetLODGeometries.ultraLow;
+                } else {
+                    if (distance < 500) {
+                        planetMesh.geometry = this.planetLODGeometries.high;
+                    } else if (distance < 1000) {
+                        planetMesh.geometry = this.planetLODGeometries.medium;
+                    } else {
+                        planetMesh.geometry = this.planetLODGeometries.low;
+                    }
+                }
+            }
+        });
+
+        // Aggiorna visibilità delle stelle
+        this.starMeshes.forEach(starMesh => {
+            starMesh.visible = frustum.containsPoint(starMesh.position);
+        });
+    }
+
+    /**
+     * Aggiorna gli effetti visivi di un pianeta
+     * @param {Object} planet - Dati del pianeta da aggiornare
+     */
+    updatePlanetVisuals(planet) {
+        const planetMesh = this.planetMeshes.find(mesh => 
+            mesh.userData.planetData && mesh.userData.planetData.id === planet.id
+        );
+        
+        if (!planetMesh) return;
+        
+        // Aggiorna aura se il pianeta è conquistato
+        if (planet.isConquered) {
+            if (!planetMesh.userData.aura) {
+                const aura = this.createPlanetAura(planet);
+                planetMesh.add(aura);
+                planetMesh.userData.aura = aura;
+            }
+        } else if (planetMesh.userData.aura) {
+            planetMesh.remove(planetMesh.userData.aura);
+            planetMesh.userData.aura = null;
+        }
+        
+        // Aggiorna effetti atmosferici
+        if (planet.hasAtmosphere && !planetMesh.userData.atmosphere) {
+            const atmosphere = this.createPlanetAtmosphere(planet);
+            planetMesh.add(atmosphere);
+            planetMesh.userData.atmosphere = atmosphere;
+        }
+        
+        // Aggiorna anelli se presenti
+        if (planet.hasRings && !planetMesh.userData.rings) {
+            const rings = this.createPlanetRings(planet);
+            planetMesh.add(rings);
+            planetMesh.userData.rings = rings;
+        }
+    }
+
+    /**
+     * Crea un effetto aura per un pianeta conquistato
+     * @param {Object} planet - Dati del pianeta
+     * @returns {THREE.Mesh} - Mesh dell'aura
+     */
+    createPlanetAura(planet) {
+        const auraGeometry = new THREE.SphereGeometry(
+            planet.radius * 1.2, 32, 32
+        );
+        const auraMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.BackSide
+        });
+        
+        return new THREE.Mesh(auraGeometry, auraMaterial);
+    }
+
+    /**
+     * Rende visibili tutti gli elementi del mondo
+     */
+    showAll() {
+        // Mostra tutti i pianeti
+        this.planetMeshes.forEach(planetMesh => {
+            planetMesh.visible = true;
+            if (planetMesh.userData.atmosphere) {
+                planetMesh.userData.atmosphere.visible = true;
+            }
+            if (planetMesh.userData.rings) {
+                planetMesh.userData.rings.visible = true;
+            }
+        });
+        
+        // Mostra tutte le stelle
+        this.starMeshes.forEach(starMesh => {
+            starMesh.visible = true;
+            // Mostra anche gli effetti delle stelle
+            starMesh.children.forEach(child => {
+                child.visible = true;
+            });
+        });
+    }
+
+    /**
+     * Nasconde gli elementi non necessari durante il combattimento
+     */
+    hideNonCombatElements() {
+        // Nascondi pianeti non coinvolti nel combattimento
+        this.planetMeshes.forEach(planetMesh => {
+            if (!planetMesh.userData.inCombat) {
+                planetMesh.visible = false;
+                if (planetMesh.userData.atmosphere) {
+                    planetMesh.userData.atmosphere.visible = false;
+                }
+                if (planetMesh.userData.rings) {
+                    planetMesh.userData.rings.visible = false;
+                }
+            }
+        });
+        
+        // Nascondi stelle non necessarie
+        this.starMeshes.forEach(starMesh => {
+            if (!starMesh.userData.inCombat) {
+                starMesh.visible = false;
+                // Nascondi anche gli effetti delle stelle
+                starMesh.children.forEach(child => {
+                    child.visible = false;
+                });
+            }
+        });
+    }
+
+    /**
+     * Crea un portale di ingresso per un pianeta
+     * @param {Object} planetData - Dati del pianeta
+     * @param {THREE.Vector3} position - Posizione del portale
+     * @returns {THREE.Group} - Gruppo contenente il portale
+     */
+    createEntrancePortal(planetData, position) {
+        const portalGroup = new THREE.Group();
+        
+        // Crea il frame del portale
+        const frameGeometry = new THREE.TorusGeometry(2, 0.2, 16, 32);
+        const frameMaterial = new THREE.MeshPhongMaterial({
+            color: 0x00ff00,
+            emissive: 0x004400
+        });
+        const frame = new THREE.Mesh(frameGeometry, frameMaterial);
+        
+        // Crea l'effetto del portale
+        const portalGeometry = new THREE.CircleGeometry(1.8, 32);
+        const portalMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const portal = new THREE.Mesh(portalGeometry, portalMaterial);
+        
+        // Aggiungi al gruppo
+        portalGroup.add(frame);
+        portalGroup.add(portal);
+        
+        // Posiziona il portale
+        portalGroup.position.copy(position);
+        portalGroup.lookAt(planetData.position);
+        
+        // Aggiungi dati per il portale
+        portalGroup.userData = {
+            type: 'entrance',
+            targetPlanet: planetData.id,
+            isActive: true
+        };
+        
+        return portalGroup;
+    }
+
+    /**
+     * Crea un portale di uscita per tornare nello spazio
+     * @param {THREE.Vector3} position - Posizione del portale
+     * @returns {THREE.Group} - Gruppo contenente il portale
+     */
+    createExitPortal(position) {
+        const portalGroup = new THREE.Group();
+        
+        // Crea il frame del portale
+        const frameGeometry = new THREE.TorusGeometry(2, 0.2, 16, 32);
+        const frameMaterial = new THREE.MeshPhongMaterial({
+            color: 0xff0000,
+            emissive: 0x440000
+        });
+        const frame = new THREE.Mesh(frameGeometry, frameMaterial);
+        
+        // Crea l'effetto del portale
+        const portalGeometry = new THREE.CircleGeometry(1.8, 32);
+        const portalMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const portal = new THREE.Mesh(portalGeometry, portalMaterial);
+        
+        // Aggiungi al gruppo
+        portalGroup.add(frame);
+        portalGroup.add(portal);
+        
+        // Posiziona il portale
+        portalGroup.position.copy(position);
+        
+        // Aggiungi dati per il portale
+        portalGroup.userData = {
+            type: 'exit',
+            isActive: true
+        };
+        
+        return portalGroup;
+    }
 } 

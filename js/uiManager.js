@@ -83,9 +83,16 @@ function setupEventListeners() {
     characterOptions.forEach(option => {
         option.addEventListener('click', () => {
             // Deseleziona tutti
-            characterOptions.forEach(opt => opt.classList.remove('selected'));
+            characterOptions.forEach(opt => {
+                opt.classList.remove('selected');
+                opt.style.opacity = '0.7';
+            });
             // Seleziona quello cliccato
             option.classList.add('selected');
+            option.style.opacity = '1';
+            // Abilita il pulsante di inizio
+            startGameButton.disabled = false;
+            startGameButton.style.opacity = '1';
         });
     });
     
@@ -95,7 +102,7 @@ function setupEventListeners() {
             const race = selectedRace.getAttribute('data-race');
             callbacks.startGame(race);
         } else {
-            alert('Seleziona una razza per iniziare!');
+            showMessage('Seleziona una razza per iniziare!', 'error');
         }
     });
     
@@ -180,6 +187,14 @@ export function showCharacterSelection() {
     characterSelectionScreen.style.display = 'flex';
     if (gameOverScreen) gameOverScreen.classList.add('hidden');
     if (planetInfoPanel) planetInfoPanel.classList.add('hidden');
+    
+    // Imposta lo stato iniziale dei personaggi e del pulsante
+    characterOptions.forEach(opt => {
+        opt.classList.remove('selected');
+        opt.style.opacity = '0.7';
+    });
+    startGameButton.disabled = true;
+    startGameButton.style.opacity = '0.5';
 }
 
 /**
@@ -299,4 +314,160 @@ export function openLegendScreen() {
 export function closeLegendScreen() {
     if (!legendScreen) return;
     legendScreen.classList.add('hidden');
+}
+
+/**
+ * Mostra un messaggio temporaneo
+ * @param {string} message - Il messaggio da mostrare
+ * @param {string} type - Il tipo di messaggio ('info', 'success', 'warning', 'error')
+ */
+export function showMessage(message, type = 'info') {
+    // Crea l'elemento del messaggio
+    const messageElement = document.createElement('div');
+    messageElement.className = `game-message ${type}`;
+    messageElement.textContent = message;
+    
+    // Aggiungi al DOM
+    document.body.appendChild(messageElement);
+    
+    // Animazione di fade-in
+    messageElement.style.opacity = '0';
+    setTimeout(() => {
+        messageElement.style.opacity = '1';
+    }, 10);
+    
+    // Rimuovi dopo 3 secondi
+    setTimeout(() => {
+        messageElement.style.opacity = '0';
+        setTimeout(() => {
+            document.body.removeChild(messageElement);
+        }, 300);
+    }, 3000);
+}
+
+/**
+ * Aggiorna la UI dei potenziamenti del giocatore
+ * @param {Object} playerData - Dati del giocatore
+ */
+export function updatePlayerStatsUI(playerData) {
+    // Aggiorna statistiche base
+    document.getElementById(UI_ELEMENTS.PLAYER_LEVEL).textContent = `Livello ${playerData.level}`;
+    document.getElementById(UI_ELEMENTS.PLAYER_EXP).textContent = `${playerData.expPoints}/${playerData.nextLevelExp} EXP`;
+    
+    // Aggiorna barre progresso potenziamenti
+    Object.entries(playerData.upgrades).forEach(([stat, level]) => {
+        const progressBar = document.querySelector(`#upgrade-${stat} .progress-bar`);
+        if (progressBar) {
+            progressBar.style.width = `${(level / 10) * 100}%`;
+            progressBar.textContent = `${level}/10`;
+        }
+    });
+    
+    // Aggiorna statistiche dettagliate
+    document.getElementById(UI_ELEMENTS.ATTACK_POWER).textContent = playerData.attackPower;
+    document.getElementById(UI_ELEMENTS.DEFENSE).textContent = playerData.maxHealth;
+    document.getElementById(UI_ELEMENTS.SPEED).textContent = playerData.speed;
+    document.getElementById(UI_ELEMENTS.ENERGY_CAPACITY).textContent = playerData.maxEnergy;
+}
+
+/**
+ * Nasconde la schermata del titolo
+ */
+export function hideTitleScreen() {
+    const titleScreen = document.getElementById(UI_ELEMENTS.TITLE_SCREEN);
+    if (titleScreen) {
+        titleScreen.style.display = 'none';
+    }
+}
+
+/**
+ * Mostra la mappa del mondo
+ */
+export function showMap() {
+    const mapScreen = document.getElementById(UI_ELEMENTS.MAP_SCREEN);
+    if (mapScreen) {
+        mapScreen.classList.remove('hidden');
+        // Aggiorna la mappa con i pianeti conquistati
+        if (player) {
+            player.conqueredPlanets.forEach(planet => {
+                const planetMarker = document.querySelector(`#planet-${planet.id}`);
+                if (planetMarker) {
+                    planetMarker.classList.add('conquered');
+                }
+            });
+        }
+    }
+}
+
+/**
+ * Chiude la mappa del mondo
+ */
+export function closeMap() {
+    const mapScreen = document.getElementById(UI_ELEMENTS.MAP_SCREEN);
+    if (mapScreen) {
+        mapScreen.classList.add('hidden');
+    }
+}
+
+/**
+ * Mostra l'inventario del giocatore
+ */
+export function showInventory() {
+    const inventoryScreen = document.getElementById(UI_ELEMENTS.INVENTORY_SCREEN);
+    if (inventoryScreen && player) {
+        inventoryScreen.classList.remove('hidden');
+        
+        // Aggiorna lista oggetti
+        const itemsList = document.getElementById(UI_ELEMENTS.INVENTORY_ITEMS);
+        itemsList.innerHTML = '';
+        
+        player.inventory.forEach(item => {
+            const itemElement = document.createElement('div');
+            itemElement.className = `inventory-item ${item.equipped ? 'equipped' : ''}`;
+            itemElement.innerHTML = `
+                <img src="public/textures/items/${item.icon}" alt="${item.name}">
+                <div class="item-info">
+                    <h3>${item.name}</h3>
+                    <p>${item.description}</p>
+                </div>
+                <div class="item-actions">
+                    ${item.equippable ? 
+                        `<button onclick="equipItem('${item.id}')">${item.equipped ? 'Unequip' : 'Equip'}</button>` : 
+                        `<button onclick="useItem('${item.id}')">Use</button>`
+                    }
+                </div>
+            `;
+            itemsList.appendChild(itemElement);
+        });
+    }
+}
+
+/**
+ * Chiude l'inventario
+ */
+export function closeInventory() {
+    const inventoryScreen = document.getElementById(UI_ELEMENTS.INVENTORY_SCREEN);
+    if (inventoryScreen) {
+        inventoryScreen.classList.add('hidden');
+    }
+}
+
+/**
+ * Mostra il menu di pausa
+ */
+export function showPauseMenu() {
+    const pauseMenu = document.getElementById(UI_ELEMENTS.PAUSE_MENU);
+    if (pauseMenu) {
+        pauseMenu.classList.remove('hidden');
+    }
+}
+
+/**
+ * Chiude il menu di pausa
+ */
+export function closePauseMenu() {
+    const pauseMenu = document.getElementById(UI_ELEMENTS.PAUSE_MENU);
+    if (pauseMenu) {
+        pauseMenu.classList.add('hidden');
+    }
 } 

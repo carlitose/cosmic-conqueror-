@@ -4,7 +4,11 @@ import { initializeSetup } from './setup.js';
 import { WorldManager } from './worldManager.js';
 import { performanceMonitor } from './performanceMonitor.js';
 import { Player } from './player.js';
-import { initializeUIManager, setPlayer as setUiPlayer, showCharacterSelection, hideCharacterSelection, showGameOver, hideGameOver, updateUI, showPlanetInfo, hidePlanetInfo, closeUpgradesScreen, closeLegendScreen } from './uiManager.js';
+import {
+    initializeUIManager, setPlayer as setUiPlayer, showCharacterSelection, hideCharacterSelection,
+    showGameOver, hideGameOver, updateUI, showPlanetInfo, hidePlanetInfo,
+    closeUpgradesScreen, closeLegendScreen, showMessage
+} from './uiManager.js';
 import { initAudioPool, playSound } from './audioManager.js';
 import { getMovementState } from './playerControls.js';
 import { SolarSystem } from './space/SolarSystem.js';
@@ -27,7 +31,7 @@ export class GameIntegration {
             ...options
         };
 
-        // Riferimenti THREE.js (impostati da initialize)
+        // Riferimenti THREE.js
         this.container = null;
         this.scene = null;
         this.camera = null;
@@ -46,7 +50,11 @@ export class GameIntegration {
             activePlanet: null,
             activeSystem: null,
             systems: [],
-            planets: []
+            planets: [],
+            uiState: {
+                inventoryOpen: false,
+                mapOpen: false
+            }
         };
 
         // Moduli principali
@@ -66,6 +74,9 @@ export class GameIntegration {
         this.lastPhysicsUpdate = 0;
         this.lastFrustumCheck = 0;
 
+        // Debug
+        this.stats = null;
+
         // Animation frame ID
         this.animationFrameId = null;
 
@@ -80,14 +91,14 @@ export class GameIntegration {
 
         try {
             // 1. Setup THREE.js Core (Scene, Camera, Renderer, Controls, Composer, Clock)
-            const setupResult = initializeSetup(container); // setup.js inizializza tutto
+            const setupResult = initializeSetup(container);
             if (!setupResult) throw new Error("Failed to initialize THREE.js setup.");
             this.scene = setupResult.scene;
             this.camera = setupResult.camera;
             this.renderer = setupResult.renderer;
             this.composer = setupResult.composer;
-            this.pointerLockControls = setupResult.controls; // Ottieni riferimento da setup.js
-            this.clock = new THREE.Clock(); // Inizializza il clock qui
+            this.pointerLockControls = setupResult.controls;
+            this.clock = new THREE.Clock();
 
             // 2. Inizializza Performance Monitor
             performanceMonitor.initialize(this.scene, this.camera, this.renderer, this.composer, document.getElementById(UI_ELEMENTS.FPS_SELECT));
@@ -95,6 +106,7 @@ export class GameIntegration {
             if (this.options.quality === 'low') {
                 performanceMonitor.enableLowQuality();
             }
+            if (this.options.debug) this.addDebugStats();
 
             // 3. Inizializza Audio Manager
             initAudioPool();
@@ -105,24 +117,19 @@ export class GameIntegration {
                 restartGame: this.restartGame.bind(this),
                 conquerPlanet: this.attemptConquerPlanet.bind(this),
                 upgrade: this.attemptUpgrade.bind(this)
-                // Manca upgradePlayer? Rinominato in upgrade
             });
 
             // 5. Player Controls (Già inizializzati in setup.js)
-            // Aggiungi listener per attacchi (è già qui, va bene)
-            document.addEventListener('player-attack', (event) => {
-                if (this.pointerLockControls?.isLocked && this.player && !this.state.isGameOver) {
-                    this.handlePlayerAttack(event.detail);
-                }
-            });
+            document.addEventListener('player-attack', this.handlePlayerAttack.bind(this));
+            document.addEventListener('keydown', this.handleKeyDown.bind(this));
 
             // 6. Inizializza moduli di gioco (non attivarli ancora)
             this.worldManager = new WorldManager(this.scene);
             this.universeGenerator = new UniverseGenerator();
             this.solarSystem = new SolarSystem(this.scene);
-            this.terrainGenerator = new TerrainGenerator(this.scene, this.camera); // Passa camera?
-            this.spaceCombat = new SpaceCombat(this.scene, this.camera, null); // Player sarà passato dopo
-            this.groundCombat = new GroundCombat(this.scene, this.camera, null); // Player sarà passato dopo
+            this.terrainGenerator = new TerrainGenerator(this.scene, this.camera);
+            this.spaceCombat = new SpaceCombat(this.scene, this.camera, null);
+            this.groundCombat = new GroundCombat(this.scene, this.camera);
 
             // 7. Prepara il pool di proiettili (Logica dal vecchio main.js)
             this.initProjectilePool();
@@ -138,7 +145,7 @@ export class GameIntegration {
 
         } catch (error) {
             console.error("Error during GameIntegration initialization:", error);
-            this.dispose(); // Tenta pulizia
+            this.dispose();
             return Promise.reject(error);
         }
     }
@@ -156,29 +163,31 @@ export class GameIntegration {
 
         try {
             // 1. Crea Player e informa UI/Combat
-            this.player = new Player(playerRace); // Ora this.player è definito
-            this.player.createMesh(); // Crea mesh ma non aggiungerla (prima persona?)
-            setUiPlayer(this.player); // Passa player a UI
-            this.spaceCombat.player = this.player; // Passa player a moduli combattimento
+            this.player = new Player(playerRace);
+            this.player.setRace(playerRace);
+            this.player.createMesh();
+            setUiPlayer(this.player);
+            this.spaceCombat.player = this.player;
             this.groundCombat.player = this.player;
 
             // 2. Genera Universo
             console.log("Generating universe...");
-            const universeData = this.universeGenerator.generateUniverse(50, 5); // Usa valori
+            const universeData = this.universeGenerator.generateUniverse(50, 5);
             this.state.systems = universeData.systems;
             this.state.planets = universeData.planets;
             console.log(`Universe generated: ${this.state.systems.length} systems, ${this.state.planets.length} planets`);
 
             // 3. Crea Visuali Universo (stelle, pianeti, ecc.)
             this.worldManager.createUniverseVisuals(this.state.systems, this.state.planets);
-            // this.worldManager.createPortals(...); // Crea portali se necessario
 
             // 4. Configura la modalità di gioco iniziale
-            this.setGameMode(GAME_MODES.SPACE); // Usa costante
+            this.setGameMode(GAME_MODES.SPACE);
 
             // 5. Blocca controlli e avvia loop
             if (this.pointerLockControls) {
                 this.pointerLockControls.lock();
+                const hint = document.getElementById('controls-hint');
+                if (hint) hint.style.opacity = '0';
             } else {
                 console.error("PointerLockControls not available when starting game!");
             }
@@ -188,7 +197,7 @@ export class GameIntegration {
 
         } catch (error) {
             console.error("Error starting game:", error);
-            this.handleGameOver(); // Gestisci errore come game over
+            this.handleGameOver();
         }
     }
 
@@ -199,7 +208,6 @@ export class GameIntegration {
         this.clock.start();
         this.state.isPaused = false;
         this.state.isGameOver = false;
-        // Resetta tempi per evitare salti
         performanceMonitor.lastFrameTime = performance.now();
         performanceMonitor.lastFrameTimestamp = performance.now();
         this.animate();
@@ -219,13 +227,20 @@ export class GameIntegration {
         this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
 
         performanceMonitor.update();
-        if (!performanceMonitor.shouldRenderFrame()) return;
+        if (this.options.debug && this.stats) this.stats.begin();
 
-        const deltaTime = Math.min(this.clock.getDelta(), 0.1); // Limita delta time massimo
+        if (!performanceMonitor.shouldRenderFrame()) {
+            if (this.options.debug && this.stats) this.stats.end();
+            return;
+        }
+
+        const deltaTime = Math.min(this.clock.getDelta(), 0.1);
         this.state.gameTime += deltaTime;
 
-        if (this.state.isPaused || this.state.isGameOver || !this.player || !this.pointerLockControls?.isLocked) {
+        const isLocked = this.pointerLockControls?.isLocked ?? false;
+        if (this.state.isPaused || this.state.isGameOver || !this.player || !isLocked) {
             this.render();
+            if (this.options.debug && this.stats) this.stats.end();
             return;
         }
 
@@ -236,6 +251,8 @@ export class GameIntegration {
             console.error("Error in animation loop:", error);
             this.handleGameOver();
         }
+
+        if (this.options.debug && this.stats) this.stats.end();
     }
 
     /**
@@ -265,38 +282,49 @@ export class GameIntegration {
         const cullingInterval = performanceMonitor.lowQualityMode ? PHYSICS.FRUSTUM_CHECK_INTERVAL * 2 : PHYSICS.FRUSTUM_CHECK_INTERVAL;
         const time = performance.now();
         if (time - this.lastFrustumCheck > cullingInterval) {
-            this.updateFrustumCulling();
+            this.worldManager.updateFrustumCulling(this.camera, performanceMonitor.lowQualityMode);
             this.lastFrustumCheck = time;
         }
 
-        // Aggiorna moduli specifici della modalità
         this.updateActiveModeLogic(deltaTime);
 
         this.updateEnemies(deltaTime);
         this.updateProjectiles(deltaTime);
 
-        updateUI(); // Aggiorna UI (da uiManager.js)
+        updateUI();
     }
 
     /** Aggiorna logica specifica della modalità */
     updateActiveModeLogic(deltaTime) {
         switch (this.state.mode) {
             case GAME_MODES.SPACE:
-                if (this.solarSystem?.active) this.solarSystem.update(deltaTime); // Assicurati che update esista e sia corretto
+                if (this.solarSystem?.active) this.solarSystem.update(deltaTime);
                 this.checkPlanetInteraction();
                 this.checkPortalInteraction();
                 break;
             case GAME_MODES.PLANET:
-                if (this.terrainGenerator?.active) this.terrainGenerator.update(deltaTime, this.player.position); // Passa pos player
-                this.checkPortalInteraction(); // Potrebbe esserci un portale anche sul pianeta?
+                if (this.terrainGenerator?.active) this.terrainGenerator.update(this.player.position);
+                this.checkPortalInteraction();
                 break;
             case GAME_MODES.SPACE_COMBAT:
-                if (this.spaceCombat?.active) this.spaceCombat.update(deltaTime);
-                if (this.spaceCombat?.isCombatComplete()) this.setGameMode(this.state.lastMode || GAME_MODES.SPACE);
+                if (this.spaceCombat?.active) {
+                    this.spaceCombat.update(deltaTime);
+                    this.activeEnemies = this.spaceCombat.enemies;
+                    if (this.spaceCombat.isCombatComplete()) {
+                        console.log("Space combat complete. Returning to last mode:", this.state.lastMode);
+                        this.setGameMode(this.state.lastMode || GAME_MODES.SPACE);
+                    }
+                }
                 break;
             case GAME_MODES.GROUND_COMBAT:
-                if (this.groundCombat?.active) this.groundCombat.update(deltaTime);
-                if (this.groundCombat?.isCombatComplete()) this.setGameMode(this.state.lastMode || GAME_MODES.PLANET);
+                if (this.groundCombat?.active) {
+                    this.groundCombat.update(deltaTime);
+                    this.activeEnemies = this.groundCombat.enemies.enemies;
+                    if (this.groundCombat.isCombatComplete()) {
+                        console.log("Ground combat complete. Returning to last mode:", this.state.lastMode);
+                        this.setGameMode(this.state.lastMode || GAME_MODES.PLANET);
+                    }
+                }
                 break;
         }
     }
@@ -304,9 +332,19 @@ export class GameIntegration {
     /** Rendering */
     render() {
         if (this.composer && !performanceMonitor.lowQualityMode) {
-            this.composer.render();
+            try {
+                this.composer.render();
+            } catch (e) {
+                console.error("Error rendering with composer:", e);
+                this.renderer.render(this.scene, this.camera);
+            }
         } else if (this.renderer) {
-            this.renderer.render(this.scene, this.camera);
+            try {
+                this.renderer.render(this.scene, this.camera);
+            } catch(e) {
+                console.error("Error rendering with renderer:", e);
+                this.handleGameOver();
+            }
         }
     }
 
@@ -316,82 +354,74 @@ export class GameIntegration {
      * @param {Object} options - Opzioni aggiuntive per la modalità
      */
     setGameMode(newMode, options = {}) {
-        if (this.state.mode === newMode && !options.force) return; // Evita cambi inutili se non forzato
+        if (this.state.mode === newMode && !options.force) return;
 
         console.log(`Switching game mode from ${this.state.mode} to ${newMode}`);
-        this.state.lastMode = this.state.mode;
+        const previousMode = this.state.mode;
         this.state.mode = newMode;
+        this.state.lastMode = previousMode;
 
-        this.deactivateCurrentSystems(); // Pulisce prima
+        this.deactivateCurrentSystems(previousMode);
 
-        // Attiva sistemi per la nuova modalità
         switch (newMode) {
             case GAME_MODES.SPACE: this.setupSpaceMode(); break;
             case GAME_MODES.PLANET: this.setupPlanetMode(options.planet || this.state.activePlanet); break;
             case GAME_MODES.SPACE_COMBAT: this.setupSpaceCombatMode(); break;
             case GAME_MODES.GROUND_COMBAT: this.setupGroundCombatMode(); break;
         }
-        // uiManager.setGameMode(newMode, options); // Notifica UI se necessario
     }
 
-    deactivateCurrentSystems() {
-        console.log("Deactivating systems for mode:", this.state.lastMode);
-        // Disattiva moduli specifici
-        if (this.solarSystem) this.solarSystem.active = false; // Assumi che abbia un flag 'active'
-        if (this.terrainGenerator) this.terrainGenerator.active = false; // Assumi che abbia un flag 'active'
-        if (this.spaceCombat) this.spaceCombat.deactivate();
-        if (this.groundCombat) this.groundCombat.deactivate();
+    deactivateCurrentSystems(modeToDeactivate) {
+        console.log("Deactivating systems for mode:", modeToDeactivate);
+        if (this.solarSystem && modeToDeactivate === GAME_MODES.SPACE) this.solarSystem.active = false;
+        if (this.terrainGenerator && modeToDeactivate === GAME_MODES.PLANET) this.terrainGenerator.active = false;
+        if (this.spaceCombat && modeToDeactivate === GAME_MODES.SPACE_COMBAT) this.spaceCombat.deactivate();
+        if (this.groundCombat && modeToDeactivate === GAME_MODES.GROUND_COMBAT) this.groundCombat.deactivate();
 
-        // Rimuovi nemici e proiettili attivi dalla scena e dalle liste
-        this.activeProjectiles.forEach(p => this.scene.remove(p.mesh));
+        this.activeProjectiles.forEach(p => {
+            if(p.mesh) this.scene.remove(p.mesh);
+            if(p.poolItem) p.poolItem.inUse = false;
+        });
         this.activeProjectiles = [];
-        this.activeEnemies.forEach(e => e.removeFromScene(this.scene)); // Usa metodo nemico se esiste
+        this.activeEnemies.forEach(e => {
+             if (e.removeFromScene) e.removeFromScene(this.scene);
+             else if(e.mesh) this.scene.remove(e.mesh);
+        });
         this.activeEnemies = [];
-
-        // Pulisci cache collisioni
         this.collisionCache.clear();
-
-        // Nascondi UI specifiche (es. info pianeta)
         hidePlanetInfo();
-
-        // Potrebbe essere necessario pulire oggetti specifici dalla scena qui
-        // this.worldManager.clearModeSpecificObjects(this.state.lastMode);
     }
 
     setupSpaceMode() {
         console.log("Setting up SPACE mode");
         if (this.solarSystem) this.solarSystem.active = true;
-        // Assicurati che worldManager mostri tutto
-        this.worldManager.showAll(); // Aggiungi questo metodo a WorldManager
-        if (this.playerControlsInitialized && this.pointerLockControls) {
-             // playerControls.setMode('space'); // Modifica playerControls per avere questo metodo
-        } else { console.warn("PlayerControls not ready in setupSpaceMode"); }
-        this.player.isFlying = true;
+        this.worldManager.showAll();
+        if (this.player) this.player.isFlying = true;
     }
 
     setupPlanetMode(planet) {
         if (!planet) {
             console.error("Cannot enter PLANET mode without a target planet.");
-            this.setGameMode(GAME_MODES.SPACE, {force: true}); // Forza ritorno allo spazio
+            this.setGameMode(GAME_MODES.SPACE, {force: true});
             return;
         }
         console.log(`Setting up PLANET mode for ${planet.name}`);
         this.state.activePlanet = planet;
 
         if (this.terrainGenerator) {
-            // this.terrainGenerator.setPlanetType(this.getPlanetTypeForTerrain(planet)); // DEPRECATO? Terrain usa dati pianeta?
-            this.terrainGenerator.generateTerrain(planet); // Usa metodo corretto
+            this.terrainGenerator.setPlanetType(planet.type);
+            this.terrainGenerator.initialize();
             this.terrainGenerator.active = true;
+        } else {
+            console.error("TerrainGenerator not initialized!");
+            this.setGameMode(GAME_MODES.SPACE, {force: true});
+            return;
         }
 
-        if (this.playerControlsInitialized && this.pointerLockControls) {
-            // playerControls.setMode('planet');
-        } else { console.warn("PlayerControls not ready in setupPlanetMode"); }
-        this.player.isFlying = false;
+        if (this.player) this.player.isFlying = false;
 
-        // Posiziona giocatore
-        const spawnHeight = this.terrainGenerator?.getHeightAt(0, 0) ?? planet.size * 1.1; // Usa getHeightAt
-        this.player.position.set(0, spawnHeight + 1, 0); // Poco sopra il terreno
+        const spawnHeight = this.terrainGenerator.getHeightAt(0, 0) + 1.0;
+        this.player.position.set(0, spawnHeight, 0);
         this.pointerLockControls.getObject().position.copy(this.player.position);
         this.camera.lookAt(this.player.position.x + 1, this.player.position.y, this.player.position.z);
 
@@ -400,275 +430,60 @@ export class GameIntegration {
 
     setupSpaceCombatMode() {
         console.log("Setting up SPACE COMBAT mode");
+        if (!this.player) {
+            console.error("Player not available for Space Combat!");
+            this.setGameMode(GAME_MODES.SPACE, {force: true});
+            return;
+        }
         if (this.spaceCombat) {
-            this.spaceCombat.player = this.player; // Assicurati che il player sia assegnato
+            this.spaceCombat.player = this.player;
             this.spaceCombat.initialize(this.player.position);
             this.spaceCombat.activate();
-            this.spaceCombat.spawnEnemyWave(this.player.position); // Spawn nemici all'inizio
+            this.spaceCombat.spawnEnemyWave(this.player.position);
+            this.activeEnemies = this.spaceCombat.enemies;
         }
-         if (this.playerControlsInitialized && this.pointerLockControls) {
-            // playerControls.setMode('spaceCombat');
-         } else { console.warn("PlayerControls not ready in setupSpaceCombatMode"); }
-        this.player.isFlying = true;
-        // Nascondi mondo non necessario?
-        this.worldManager.hideNonCombatElements(); // Aggiungere a WorldManager
+        if (this.player) this.player.isFlying = true;
+        this.worldManager.hideNonCombatElements();
     }
 
     setupGroundCombatMode() {
-        if (!this.state.activePlanet) {
-             console.error("Cannot enter GROUND COMBAT without an active planet.");
-             this.setGameMode(GAME_MODES.SPACE, {force: true});
+        if (!this.state.activePlanet || !this.player || !this.terrainGenerator) {
+             console.error("Cannot enter GROUND COMBAT without active planet, player or terrain.");
+             this.setGameMode(this.state.lastMode || GAME_MODES.PLANET, {force: true});
              return;
         }
         console.log("Setting up GROUND COMBAT mode on", this.state.activePlanet.name);
         if (this.groundCombat) {
-            this.groundCombat.player = this.player; // Assicura player assegnato
+            this.groundCombat.player = this.player;
             this.groundCombat.initialize();
             this.groundCombat.activate();
-            if (this.terrainGenerator?.active) {
-                this.groundCombat.physics.setTerrain(this.terrainGenerator); // Collega fisica e terreno
-            }
-            this.groundCombat.enemies.setupSpawnPointsCircle(this.player.position, 50, 5); // Setup punti spawn
-            this.groundCombat.enemies.spawnEnemyWave(this.player.position); // Spawn nemici
-        }
-         if (this.playerControlsInitialized && this.pointerLockControls) {
-            // playerControls.setMode('groundCombat');
-         } else { console.warn("PlayerControls not ready in setupGroundCombatMode"); }
-        this.player.isFlying = false;
-        // Mantieni visibile solo il terreno attuale? WorldManager potrebbe gestirlo.
-    }
-
-    /**
-     * Gestisce l'attacco del giocatore (callback dai controlli)
-     * @param {string} attackType - Tipo di attacco
-     * @param {THREE.Vector3} direction - Direzione dell'attacco
-     */
-    handlePlayerAttack(attackType, direction) {
-        const attackData = this.player.attack(attackType, direction);
-        
-        if (attackData) {
-            // In base alla modalità, passa l'attacco al gestore appropriato
-            if (this.state.mode === 'combat') {
-                if (this.state.lastMode === 'space') {
-                    this.spaceCombat.createProjectile(attackData);
-                } else {
-                    this.groundCombat.createProjectile(attackData);
-                }
+            if (this.terrainGenerator.active) {
+                this.groundCombat.physics.setTerrain(this.terrainGenerator);
             } else {
-                // Attacco in spazio o pianeta
-                // Per ora non facciamo nulla qui, ma potremmo implementare proiettili
-                // anche in queste modalità se necessario
+                 console.warn("TerrainGenerator is not active for GroundCombat physics");
             }
-            
-            // Riproduci il suono dell'attacco
-            this.audioManager.playSound('shoot', 0.5);
+            this.groundCombat.enemies.setupSpawnPointsCircle(this.player.position, 50, 5);
+            this.groundCombat.enemies.spawnEnemyWave(this.player.position);
+            this.activeEnemies = this.groundCombat.enemies.enemies;
         }
-    }
-    
-    /**
-     * Verifica se dovremmo entrare in combattimento spaziale
-     * @returns {boolean} True se dovremmo entrare in combattimento
-     */
-    shouldEnterSpaceCombat() {
-        // Logica per decidere quando entrare in combattimento spaziale
-        // Per ora, ritorna false (placeholder)
-        return false;
-    }
-    
-    /**
-     * Verifica se dovremmo entrare in combattimento a terra
-     * @returns {boolean} True se dovremmo entrare in combattimento
-     */
-    shouldEnterGroundCombat() {
-        // Logica per decidere quando entrare in combattimento a terra
-        // Per ora, ritorna false (placeholder)
-        return false;
-    }
-    
-    /**
-     * Verifica se il combattimento è completo
-     * @returns {boolean} True se il combattimento è completo
-     */
-    isCombatComplete() {
-        // Verifica se il combattimento è finito
-        if (this.state.lastMode === 'space') {
-            return this.spaceCombat.isComplete();
-        } else {
-            return this.groundCombat.isComplete();
-        }
-    }
-    
-    /**
-     * Genera nemici spaziali
-     * @returns {Array} Array di nemici
-     */
-    generateSpaceEnemies() {
-        // Implementazione per generare nemici nello spazio
-        return [];
-    }
-    
-    /**
-     * Genera nemici terrestri
-     * @returns {Array} Array di nemici
-     */
-    generateGroundEnemies() {
-        // Implementazione per generare nemici sul terreno
-        return [];
-    }
-    
-    /**
-     * Riavvia il gioco dopo un game over
-     */
-    restartGame() {
-        console.log("Restarting game...");
-        hideGameOver();
-        
-        // Resetta stato giocatore
-        if(this.player) this.player.reset(); // Assumendo che Player abbia un metodo reset()
-
-        // Resetta stato gioco
-        this.state.isGameOver = false;
-        this.state.gameTime = 0;
-        this.activeEnemies = [];
-        this.activeProjectiles = [];
-        
-        // Torna alla modalità iniziale e riavvia loop
-        this.setGameMode(GAME_MODES.SPACE);
-        if (this.pointerLockControls) this.pointerLockControls.lock();
-        this.startGameLoop();
-    }
-    
-    /**
-     * Tenta la conquista di un pianeta
-     * @param {Object} planet - Pianeta da conquistare
-     */
-    conquerPlanet(planet = null) {
-        const targetPlanet = planet || this.state.activePlanet;
-        
-        if (!targetPlanet) {
-            console.error("Tentativo di conquista senza un pianeta selezionato");
-            return;
-        }
-        
-        // Tenta la conquista
-        const result = {
-            success: this.player.attackPower > targetPlanet.defense,
-            resources: Math.floor(targetPlanet.size * 10 + Math.random() * 20),
-            message: ""
-        };
-        
-        if (result.success) {
-            // Conquista riuscita
-            targetPlanet.isConquered = true;
-            targetPlanet.conqueredBy = this.player.race;
-            targetPlanet.defense = 0;
-            
-            // Aggiorna risorse del giocatore
-            this.player.currency += result.resources;
-            
-            // Mostra messaggio
-            result.message = `Hai conquistato ${targetPlanet.name} e ottenuto ${result.resources} risorse!`;
-            this.uiManager.showMessage(result.message);
-            
-            // Aggiorna visuali del pianeta
-            this.worldManager.updatePlanetVisuals(targetPlanet);
-        } else {
-            // Conquista fallita, avvia combattimento
-            result.message = `Difese di ${targetPlanet.name} troppo forti. Inizia il combattimento!`;
-            this.uiManager.showMessage(result.message);
-            
-            // Avvia il combattimento
-            this.setGameMode('combat');
-        }
-        
-        return result;
-    }
-    
-    /**
-     * Potenzia una statistica del giocatore
-     * @param {string} stat - Statistica da potenziare
-     */
-    upgradePlayer(stat) {
-        const result = this.player.upgrade(stat);
-        
-        if (result.success) {
-            this.uiManager.showMessage(result.message);
-            this.uiManager.updatePlayerStats(this.player);
-        } else {
-            this.uiManager.showMessage(result.message, 'error');
-        }
-        
-        return result;
-    }
-    
-    /**
-     * Handler per il ridimensionamento della finestra
-     */
-    onWindowResize() {
-        this.camera.aspect = window.innerWidth / window.innerHeight;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        if (this.composer) {
-            this.composer.setSize(window.innerWidth, window.innerHeight);
-        }
-    }
-    
-    /**
-     * Pulisce le risorse quando il gioco viene fermato
-     */
-    dispose() {
-        // Ferma il ciclo di gioco
-        if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-        }
-        
-        // Rimuovi event listener
-        window.removeEventListener('resize', this.onWindowResize);
-        
-        // Disattiva i controlli
-        if (this.playerControls) {
-            this.playerControls.dispose();
-        }
-        
-        // Pulisci THREE.js
-        this.scene.traverse(object => {
-            if (object.geometry) {
-                object.geometry.dispose();
-            }
-            
-            if (object.material) {
-                if (Array.isArray(object.material)) {
-                    object.material.forEach(material => material.dispose());
-                } else {
-                    object.material.dispose();
-                }
-            }
-        });
-        
-        if (this.renderer) {
-            this.renderer.dispose();
-        }
-        
-        // Pulisci moduli
-        if (this.audioManager) {
-            this.audioManager.dispose();
-        }
-        
-        console.log("Risorse del gioco liberate");
+        if (this.player) this.player.isFlying = false;
     }
 
-    // --- Logica di Combattimento/Proiettili (Spostare in CombatManager in futuro) ---
+    // --- Logica di Combattimento/Proiettili (Spostare in CombatManager) ---
 
     initProjectilePool() {
-        const sphereGeo = new THREE.SphereGeometry(0.3, 8, 8); // Dimensione proiettile base
+        const sphereGeo = new THREE.SphereGeometry(0.3, 8, 8);
         const projectileMats = {
             player: new THREE.MeshBasicMaterial({ color: 0x00ffff }),
             enemy: new THREE.MeshBasicMaterial({ color: 0xffaa00 }),
-            special: new THREE.MeshBasicMaterial({ color: 0xff00ff }) // Esempio
+            special: new THREE.MeshBasicMaterial({ color: 0xff00ff }),
+            energyWave: new THREE.MeshBasicMaterial({ color: 0x3e78ff, transparent: true, opacity: 0.8 }),
+            laserEyes: new THREE.MeshBasicMaterial({ color: 0xff3e3e, transparent: true, opacity: 0.9 })
         };
 
+        this.projectilePool = [];
         for (let i = 0; i < MAX_PROJECTILES; i++) {
-            const mesh = new THREE.Mesh(sphereGeo.clone(), projectileMats.player); // Inizia con mat player
+            const mesh = new THREE.Mesh(sphereGeo.clone(), projectileMats.player);
             mesh.visible = false;
             this.scene.add(mesh);
             this.projectilePool.push({ mesh: mesh, materialCache: projectileMats, inUse: false });
@@ -676,12 +491,27 @@ export class GameIntegration {
         console.log(`Projectile pool initialized with ${this.projectilePool.length} objects.`);
     }
 
-    createProjectile(data) {
-        let poolItem = this.projectilePool.find(p => !p.inUse);
+    handlePlayerAttack(detail) {
+        if (!this.player) return;
 
-        if (!poolItem) {
-            // Se il pool è esaurito, ricicla il proiettile più vecchio
-            // Trova il proiettile con startTime più basso tra quelli attivi
+        const direction = detail.direction || new THREE.Vector3();
+
+        let attackData = null;
+        if (detail.button === 0) {
+            attackData = this.player.attackEnergy(direction);
+        } else if (detail.button === 2) {
+            attackData = this.player.attackSpecial(direction);
+        }
+
+        if (attackData) {
+            this.createProjectile(attackData);
+        }
+    }
+
+    createProjectile(data) {
+         let poolItem = this.projectilePool.find(p => !p.inUse);
+
+         if (!poolItem) {
             let oldestProjectileIndex = -1;
             let oldestTime = Infinity;
             for(let i = 0; i < this.activeProjectiles.length; i++) {
@@ -693,48 +523,52 @@ export class GameIntegration {
             if (oldestProjectileIndex !== -1) {
                  console.warn("Projectile pool limit reached, recycling oldest projectile.");
                  const recycledData = this.activeProjectiles.splice(oldestProjectileIndex, 1)[0];
-                 poolItem = recycledData.poolItem; // Ottieni il poolItem riciclato
-                 // Non rimuovere dalla scena qui, verrà riutilizzato
+                 poolItem = recycledData.poolItem;
             } else {
                 console.error("Projectile pool limit reached and no active projectile to recycle!");
-                return; // Non possiamo creare nuovi proiettili
+                return;
             }
         }
 
+         poolItem.inUse = true;
+         const mesh = poolItem.mesh;
+         const mats = poolItem.materialCache;
 
-        poolItem.inUse = true;
-        const mesh = poolItem.mesh;
+         let targetMaterial = mats.player;
+         if(data.isEnemyProjectile) {
+             targetMaterial = mats.enemy;
+         } else if (data.type === 'energyWave') {
+             targetMaterial = mats.energyWave;
+         } else if (data.type === 'laserEyes') {
+            targetMaterial = mats.laserEyes;
+         }
 
-        // Imposta materiale corretto
-        if (data.isEnemyProjectile) {
-            mesh.material = poolItem.materialCache.enemy;
-        } else if (data.type === 'special') { // Assumi un tipo speciale
-            mesh.material = poolItem.materialCache.special;
-        } else {
-            mesh.material = poolItem.materialCache.player;
-        }
-        mesh.material.color.set(data.color || (data.isEnemyProjectile ? 0xffaa00 : 0x00ffff));
+         mesh.material = targetMaterial;
+         mesh.material.color.set(data.color || targetMaterial.color.getHex());
 
-        mesh.position.copy(data.origin).addScaledVector(data.direction, 1.5); // Posizione iniziale
-        mesh.scale.setScalar(data.width || 1); // Scala
-        mesh.visible = true;
-        // mesh.lookAt(mesh.position.clone().add(data.direction)); // Orientamento (opzionale per sfere)
+         mesh.position.copy(data.origin).addScaledVector(data.direction, 1.5);
+         mesh.scale.setScalar(data.width || 1);
+         mesh.visible = true;
 
-        this.activeProjectiles.push({
-            poolItem: poolItem, // Mantieni riferimento al pool item
-            mesh: mesh,
-            direction: data.direction,
-            speed: data.speed,
-            power: data.power,
-            range: data.range,
-            distanceTraveled: 0,
-            type: data.type,
-            isEnemyProjectile: data.isEnemyProjectile || false,
-            startTime: performance.now() // Per riciclaggio
-        });
+         this.activeProjectiles.push({
+             poolItem: poolItem,
+             mesh: mesh,
+             direction: data.direction,
+             speed: data.speed,
+             power: data.power,
+             range: data.range,
+             distanceTraveled: 0,
+             type: data.type,
+             isEnemyProjectile: data.isEnemyProjectile || false,
+             startTime: performance.now()
+         });
 
-        playSound(data.isEnemyProjectile ? 'enemy_shoot' : 'shoot', 0.4); // Usa suoni diversi?
-    }
+         let soundName = 'shoot';
+         if (data.isEnemyProjectile) soundName = 'enemy_shoot';
+         else if (data.type === 'energyWave') soundName = 'energy_wave_sound';
+         else if (data.type === 'laserEyes') soundName = 'laser_sound';
+         playSound(soundName, 0.4);
+     }
 
     updateProjectiles(deltaTime) {
         const now = performance.now();
@@ -750,9 +584,7 @@ export class GameIntegration {
             let hit = false;
             let hitObject = null;
 
-            // --- Collision Detection (Ottimizzata) ---
-            // Crea bounding box solo una volta per frame se serve
-             const projBox = new THREE.Box3().setFromObject(p.mesh);
+            const projBox = new THREE.Box3().setFromObject(p.mesh);
 
             if (p.isEnemyProjectile && this.player.mesh) {
                  const playerBox = new THREE.Box3().setFromObject(this.player.mesh);
@@ -764,38 +596,31 @@ export class GameIntegration {
                 for (let j = this.activeEnemies.length - 1; j >= 0; j--) {
                      const enemy = this.activeEnemies[j];
                      if (!enemy.isActive || !enemy.mesh) continue;
-                     // Ottimizzazione: controlla solo nemici relativamente vicini
-                     if (enemy.position.distanceToSquared(p.mesh.position) < p.range * p.range * 0.5) { // Check distanza al quadrato
+                     if (enemy.position.distanceToSquared(p.mesh.position) < p.range * p.range * 0.5) {
                          const enemyBox = new THREE.Box3().setFromObject(enemy.mesh);
                          if (projBox.intersectsBox(enemyBox)) {
                              hit = true;
                              hitObject = enemy;
-                             break; // Colpito un nemico, esci dal loop nemici
+                             break;
                          }
                      }
                  }
             }
 
-            // Se c'è stato un hit, gestiscilo
             if (hit && hitObject) {
                 this.handleProjectileHit(p, hitObject);
-                // Ricicla proiettile
                 p.mesh.visible = false;
                 p.poolItem.inUse = false;
                 this.activeProjectiles.splice(i, 1);
-                continue; // Passa al prossimo proiettile
+                continue;
             }
 
-            // Rimuovi se fuori range
             if (p.distanceTraveled > p.range) {
                 p.mesh.visible = false;
                 p.poolItem.inUse = false;
                 this.activeProjectiles.splice(i, 1);
             }
         }
-
-        // Pulizia cache collisioni (se usata attivamente)
-        // if (now % 5000 < 20) { this.cleanupCollisionCache(now); }
     }
 
     handleProjectileHit(projectile, target) {
@@ -805,56 +630,49 @@ export class GameIntegration {
         if (target === this.player) {
             const alive = this.player.takeDamage(damageDealt);
             playSound('hit', 0.7);
-            this.createHitEffect(hitPosition, 0xff0000); // Effetto rosso
+            this.createHitEffect(hitPosition, 0xff0000);
             if (!alive) this.handleGameOver();
-        } else { // È un nemico
-             const enemy = target; // Rinomina per chiarezza
+        } else {
+             const enemy = target;
              const enemyStillAlive = enemy.takeDamage(damageDealt);
              playSound('hit', 0.5);
-             this.createHitEffect(hitPosition, 0xffff00); // Effetto giallo
+             this.createHitEffect(hitPosition, 0xffff00);
 
              if (!enemyStillAlive) {
-                 // Nemico distrutto
-                 const expGained = enemy.type === 'drone' ? 10 : 25; // Da rendere dinamico
+                 const expGained = enemy.type === 'drone' ? 10 : 25;
                  const currencyGained = enemy.type === 'drone' ? 5 : 10;
                  this.player.gainExperience(expGained);
                  this.player.currency += currencyGained;
-                 this.createExplosionEffect(enemy.position, enemy.mesh.scale.x * 1.5); // Scala esplosione
+                 this.createExplosionEffect(enemy.position, enemy.mesh.scale.x * 1.5);
                  playSound('explosion', 0.6);
-                 // Il nemico verrà rimosso nel ciclo updateEnemies perché isActive è false
              }
         }
     }
-
 
     updateEnemies(deltaTime) {
          for (let i = this.activeEnemies.length - 1; i >= 0; i--) {
              const enemy = this.activeEnemies[i];
              if (!enemy.isActive) {
-                 enemy.removeFromScene(this.scene); // Assicurati che questo metodo esista in Enemy.js
+                 enemy.removeFromScene(this.scene);
                  this.activeEnemies.splice(i, 1);
                  continue;
              }
 
-             // Ottimizzazione: aggiorna AI solo se vicino o periodicamente
              let shouldUpdateAI = false;
              const distanceToPlayerSq = enemy.position.distanceToSquared(this.player.position);
-             const updateRangeSq = 500 * 500; // Range entro cui aggiornare sempre
+             const updateRangeSq = 500 * 500;
 
              if(performanceMonitor.lowQualityMode) {
-                 shouldUpdateAI = distanceToPlayerSq < updateRangeSq * 0.2 || (performanceMonitor.frameCount + i) % 10 === 0; // Aggiorna meno spesso in low quality
+                 shouldUpdateAI = distanceToPlayerSq < updateRangeSq * 0.2 || (performanceMonitor.frameCount + i) % 10 === 0;
              } else {
-                 shouldUpdateAI = distanceToPlayerSq < updateRangeSq || (performanceMonitor.frameCount + i) % 5 === 0; // Aggiorna più spesso
+                 shouldUpdateAI = distanceToPlayerSq < updateRangeSq || (performanceMonitor.frameCount + i) % 5 === 0;
              }
 
              if(shouldUpdateAI){
-                 const enemyProjectileData = enemy.update(deltaTime, this.player); // Update AI e attacco
+                 const enemyProjectileData = enemy.update(deltaTime, this.player);
                  if (enemyProjectileData) {
                      this.createProjectile(enemyProjectileData);
                  }
-             } else {
-                // Movimento semplice o interpolazione se lontano e non aggiornato
-                // enemy.simpleUpdate(deltaTime);
              }
          }
      }
@@ -862,11 +680,10 @@ export class GameIntegration {
     checkPlanetInteraction() {
         if (!this.universeGenerator || !this.player || this.state.mode !== GAME_MODES.SPACE) return;
 
-        const playerPos = this.player.position; // Usa posizione player non camera per interazione
+        const playerPos = this.player.position;
         let closestPlanet = null;
         let closestDistSq = Infinity;
 
-        // Usa worldManager per ottenere le mesh dei pianeti
         this.worldManager.planetMeshes.forEach(planetLOD => {
             if(planetLOD.userData.planetData){
                 const planetData = planetLOD.userData.planetData;
@@ -878,30 +695,27 @@ export class GameIntegration {
             }
         });
 
-        const interactionDistance = (closestPlanet?.size || 0) * 1.5 + 10; // Distanza = 1.5x raggio + 10 unità
+        const interactionDistance = (closestPlanet?.size || 0) * 1.5 + 10;
 
         if (closestPlanet && closestDistSq < interactionDistance * interactionDistance) {
             if (this.state.activePlanet !== closestPlanet) {
                 this.state.activePlanet = closestPlanet;
-                showPlanetInfo(closestPlanet); // Mostra UI
-                // TODO: Abilitare tasto 'E' per atterrare/conquistare
+                showPlanetInfo(closestPlanet);
             }
         } else {
             if (this.state.activePlanet) {
-                hidePlanetInfo(); // Nascondi UI
+                hidePlanetInfo();
                 this.state.activePlanet = null;
-                // TODO: Disabilitare tasto 'E'
             }
         }
     }
 
     checkPortalInteraction() {
-        // ... Implementa usando this.worldManager.exitPortalBox ecc. ...
+        // Implementa usando this.worldManager.exitPortalBox ecc.
     }
 
     updateFrustumCulling() {
         if (!this.camera || !this.worldManager) return;
-        // Delega a WorldManager
         this.worldManager.updateFrustumCulling(this.camera, performanceMonitor.lowQualityMode);
     }
 
@@ -916,15 +730,14 @@ export class GameIntegration {
 
         let elapsed = 0;
         const animateEffect = () => {
-            const deltaEffect = this.clock.getDelta(); // Usa clock per delta
+            const deltaEffect = this.clock.getDelta();
             elapsed += deltaEffect;
             if (elapsed < effectDuration) {
-                effectMesh.scale.multiplyScalar(1 + 15 * deltaEffect); // Espandi rapidamente
+                effectMesh.scale.multiplyScalar(1 + 15 * deltaEffect);
                 effectMesh.material.opacity = 0.8 * (1 - elapsed / effectDuration);
                 requestAnimationFrame(animateEffect);
             } else {
                 this.scene.remove(effectMesh);
-                // TODO: Dispose geometry/material
             }
         };
         requestAnimationFrame(animateEffect);
@@ -951,7 +764,7 @@ export class GameIntegration {
 
         let elapsed = 0;
         const animateExplosion = () => {
-            const deltaExplosion = this.clock.getDelta(); // Usa clock per delta
+            const deltaExplosion = this.clock.getDelta();
             elapsed += deltaExplosion;
             if (elapsed < effectDuration) {
                 const posAttribute = particleSystem.geometry.attributes.position;
@@ -963,7 +776,6 @@ export class GameIntegration {
                 requestAnimationFrame(animateExplosion);
             } else {
                 this.scene.remove(particleSystem);
-                // TODO: Dispose geometry/material
             }
         };
         requestAnimationFrame(animateExplosion);
@@ -974,10 +786,38 @@ export class GameIntegration {
         if (this.state.isGameOver) return;
         console.log("GAME OVER!");
         this.state.isGameOver = true;
+        this.stopGameLoop();
         if (this.pointerLockControls) this.pointerLockControls.unlock();
+        showGameOver();
         closeUpgradesScreen();
         closeLegendScreen();
-        showGameOver(); // Mostra UI Game Over
+        const hint = document.getElementById('controls-hint');
+        if(hint) hint.style.opacity = '1';
+    }
+
+    restartGame() {
+        console.log("Restarting game...");
+        hideGameOver();
+
+        if (this.player && typeof this.player.reset === 'function') {
+            this.player.reset();
+        } else {
+            console.warn("Player.reset() method not found.");
+            location.reload();
+            return;
+        }
+
+        this.state.isGameOver = false;
+        this.state.isPaused = false;
+        this.state.gameTime = 0;
+
+        this.setGameMode(GAME_MODES.SPACE, { force: true });
+        if (this.pointerLockControls) {
+             this.pointerLockControls.lock();
+             const hint = document.getElementById('controls-hint');
+             if (hint) hint.style.opacity = '0';
+        }
+        this.startGameLoop();
     }
 
     // --- Azioni Giocatore (Callbacks da UI) ---
@@ -987,335 +827,87 @@ export class GameIntegration {
         const planet = this.state.activePlanet;
         const result = this.universeGenerator.conquerPlanet(planet, this.player.race, this.player.attackPower);
 
-        console.log(result.message);
+        showMessage(result.message, result.success ? 'success' : 'warning');
 
         if (result.success) {
             this.player.currency += result.resources;
             this.player.addConqueredPlanet(planet);
-            showPlanetInfo(planet); // Aggiorna UI
-            this.worldManager.updatePlanetVisuals(planet); // Cambia aspetto pianeta
-            this.setGameMode(GAME_MODES.PLANET, { planet }); // Vai al pianeta
+            showPlanetInfo(planet);
+            if(this.worldManager.updatePlanetVisuals) this.worldManager.updatePlanetVisuals(planet);
             playSound('success');
         } else {
-            // Avvia combattimento terrestre
             playSound('failure');
-            this.setGameMode(GAME_MODES.GROUND_COMBAT);
         }
     }
 
     attemptUpgrade(stat) {
         if (!this.player) return;
-        
-        // Calcola costo
         const currentLevel = this.player.upgrades[stat];
         const baseCost = 100;
+        const maxLevel = 10;
         const cost = baseCost * Math.pow(2, currentLevel);
+
+        if (currentLevel >= maxLevel) {
+            showMessage("Potenziamento già al massimo livello.", "info");
+            return;
+        }
 
         const result = this.player.upgrade(stat, cost);
 
         if (result.success) {
-            console.log(result.message);
-            updateUI();
-            playSound('upgrade');
+             showMessage(result.message, 'success');
+             updateUI();
+             playSound('upgrade');
         } else {
-            console.warn(result.message);
-            playSound('error');
+             showMessage(result.message, 'error');
+             playSound('error');
         }
     }
-
 
     getPlanetTypeForTerrain(planet) {
         if (!planet || !planet.type) return 'earth';
         return planet.type;
     }
 
-    // --- UI Management ---
-    updateUI() {
-        if (!this.player || !this.uiManager) return;
-
-        // Aggiorna HUD con dati del giocatore
-        this.uiManager.updatePlayerStats({
-            health: this.player.health,
-            maxHealth: this.player.maxHealth,
-            energy: this.player.energy,
-            maxEnergy: this.player.maxEnergy,
-            currency: this.player.currency,
-            level: this.player.level,
-            experience: this.player.experience,
-            experienceToNextLevel: this.player.experienceToNextLevel
-        });
-
-        // Aggiorna informazioni di gioco
-        const planetName = this.state.activePlanet ? this.state.activePlanet.name : '';
-        const systemName = this.state.currentSystem ? this.state.currentSystem.name : '';
-        
-        this.uiManager.updateGameInfo({
-            mode: this.state.mode,
-            fps: Math.round(performanceMonitor.fps),
-            planetName: planetName,
-            systemName: systemName,
-            gameTime: this.state.gameTime.toFixed(0)
-        });
-
-        // Aggiorna mini-mappa se disponibile nel UIManager
-        if (this.uiManager.updateMinimap && this.state.mode === GAME_MODES.SPACE) {
-            const nearbyObjects = [];
-            
-            // Aggiungi pianeti alla minimappa
-            this.worldManager.planetMeshes.forEach(planet => {
-                if (planet.userData.planetData) {
-                    nearbyObjects.push({
-                        position: planet.position.clone(),
-                        type: 'planet',
-                        size: planet.userData.planetData.size,
-                        conquered: planet.userData.planetData.owner === this.player.race
-                    });
-                }
-            });
-            
-            // Aggiungi nemici alla minimappa
-            this.activeEnemies.forEach(enemy => {
-                nearbyObjects.push({
-                    position: enemy.position.clone(),
-                    type: 'enemy'
-                });
-            });
-            
-            this.uiManager.updateMinimap(this.player.position, nearbyObjects);
-        }
-        
-        // Aggiorna contatore nemici se in modalità combattimento
-        if (this.state.mode === GAME_MODES.SPACE_COMBAT || this.state.mode === GAME_MODES.GROUND_COMBAT) {
-            this.uiManager.updateCombatInfo({
-                enemiesRemaining: this.activeEnemies.length,
-                waveNumber: this.state.currentWave || 1
-            });
-        }
-    }
-
-    toggleInventory() {
-        if (!this.player || !this.uiManager) return;
-        
-        if (this.state.uiState.inventoryOpen) {
-            this.uiManager.closeInventory();
-            if (this.pointerLockControls) this.pointerLockControls.lock();
-        } else {
-            this.uiManager.showInventory(this.player.inventory);
-            if (this.pointerLockControls) this.pointerLockControls.unlock();
-        }
-        
-        this.state.uiState.inventoryOpen = !this.state.uiState.inventoryOpen;
-    }
-
-    toggleMap() {
-        if (!this.uiManager) return;
-        
-        if (this.state.uiState.mapOpen) {
-            this.uiManager.closeMap();
-            if (this.pointerLockControls) this.pointerLockControls.lock();
-        } else {
-            // Genera mappa dell'universo con dati da universeGenerator
-            const universeData = {
-                systems: this.universeGenerator ? this.universeGenerator.getSystems() : [],
-                playerPosition: this.player ? this.player.position.clone() : new THREE.Vector3(),
-                conqueredPlanets: this.player ? this.player.getConqueredPlanets() : []
-            };
-            
-            this.uiManager.showMap(universeData);
-            if (this.pointerLockControls) this.pointerLockControls.unlock();
-        }
-        
-        this.state.uiState.mapOpen = !this.state.uiState.mapOpen;
-    }
-
-    handleUIInteraction(action, data) {
-        if (!this.player) return;
-        
-        switch(action) {
-            case 'upgrade':
-                this.attemptUpgrade(data.stat);
-                break;
-                
-            case 'useItem':
-                this.player.useItem(data.itemId);
-                this.updateUI();
-                break;
-                
-            case 'equipItem':
-                this.player.equipItem(data.itemId, data.slot);
-                this.updateUI();
-                break;
-                
-            case 'jumpToSystem':
-                if (this.universeGenerator) {
-                    const system = this.universeGenerator.getSystemById(data.systemId);
-                    if (system) {
-                        this.teleportPlayer(system.position);
-                        this.toggleMap(); // Chiudi mappa
-                    }
-                }
-                break;
-                
-            case 'landOnPlanet':
-                if (this.state.activePlanet) {
-                    this.attemptConquerPlanet();
-                }
-                break;
-                
-            case 'restart':
-                this.restartGame();
-                break;
-                
-            default:
-                console.warn(`UI action not handled: ${action}`);
-        }
-    }
-
-    teleportPlayer(position) {
-        if (!this.player) return;
-        
-        this.player.position.copy(position);
-        // Offset per evitare collisioni
-        this.player.position.y += 10;
-        
-        // Resetta velocità
-        this.player.velocity.set(0, 0, 0);
-        
-        // Resetta controlli
-        if (this.controls) {
-            this.controls.target.copy(this.player.position);
-        }
-        
-        this.createExplosionEffect(this.player.position, 2, 0x00ffff);
-        playSound('teleport');
-    }
-
-    // --- Audio Management ---
-    setupAudio() {
-        if (!this.audioManager) return;
-        
-        // Imposta livelli audio da configurazione
-        this.audioManager.setMusicVolume(this.options.musicVolume || 0.5);
-        this.audioManager.setSfxVolume(this.options.sfxVolume || 0.7);
-        
-        // Carica musica di background
-        this.audioManager.loadBackgroundMusic('space', './assets/audio/space_ambient.mp3');
-        this.audioManager.loadBackgroundMusic('combat', './assets/audio/combat.mp3');
-        this.audioManager.loadBackgroundMusic('planet', './assets/audio/planet_ambient.mp3');
-        
-        // Avvia musica spaziale
-        this.audioManager.playBackgroundMusic('space');
-    }
-
-    playBackgroundMusic(type) {
-        if (!this.audioManager) return;
-        this.audioManager.playBackgroundMusic(type);
-    }
-
-    // --- Event Handlers ---
-    handleWindowResize() {
-        if (!this.camera || !this.renderer) return;
-        
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-        
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        
-        this.renderer.setSize(width, height);
-        if (this.composer) {
-            this.composer.setSize(width, height);
-        }
-        
-        console.log(`Resized to ${width}x${height}`);
-    }
-
+    // --- Gestione Input Globale ---
     handleKeyDown(event) {
-        // Ignora input se in modalità UI
-        if (this.state.uiState.inventoryOpen || this.state.uiState.mapOpen) {
-            return;
-        }
-        
-        switch(event.code) {
-            case 'KeyI':
-                this.toggleInventory();
-                break;
-                
-            case 'KeyM':
-                this.toggleMap();
-                break;
-                
+        if (this.state.isGameOver || this.state.isPaused) return;
+        if (!this.pointerLockControls?.isLocked && !['KeyU', 'KeyL'].includes(event.code)) return;
+
+        switch (event.code) {
+            case 'KeyU': this.uiManager.openUpgradesScreen(); break;
+            case 'KeyL': this.uiManager.openLegendScreen(); break;
             case 'KeyE':
-                // Interagisci con pianeta/portale
-                if (this.state.activePlanet) {
-                    this.attemptConquerPlanet();
-                }
-                break;
-                
-            case 'KeyF':
-                // Abilita/disabilita volo in modalità pianeta
-                if (this.state.mode === GAME_MODES.PLANET && this.player) {
-                    this.player.toggleFlight();
-                }
-                break;
-                
-            case 'Digit1':
-            case 'Digit2':
-            case 'Digit3':
-            case 'Digit4': {
-                // Attiva abilità/usa oggetto rapido
-                const slotIndex = parseInt(event.code.replace('Digit', '')) - 1;
-                if (this.player) {
-                    this.player.useQuickSlot(slotIndex);
-                    this.updateUI();
-                }
-            }
-                break;
-                
-            case 'Escape':
-                // Apri menu pausa
-                this.togglePauseMenu();
-                break;
+                 if (this.state.mode === GAME_MODES.SPACE && this.state.activePlanet) {
+                      if (!this.state.activePlanet.isConquered) {
+                          this.attemptConquerPlanet();
+                      } else {
+                           console.log("Landing on planet:", this.state.activePlanet.name);
+                           this.setGameMode(GAME_MODES.PLANET, { planet: this.state.activePlanet });
+                      }
+                 } else if (this.state.mode === GAME_MODES.PLANET) {
+                      console.log("Leaving planet...");
+                      this.setGameMode(GAME_MODES.SPACE);
+                 }
+                 break;
         }
     }
 
-    togglePauseMenu() {
-        if (!this.uiManager) return;
-        
-        if (this.state.isPaused) {
-            this.uiManager.closePauseMenu();
-            if (this.pointerLockControls) this.pointerLockControls.lock();
-            this.state.isPaused = false;
-            this.clock.start(); // Riavvia clock
-        } else {
-            this.uiManager.showPauseMenu();
-            if (this.pointerLockControls) this.pointerLockControls.unlock();
-            this.state.isPaused = true;
-            this.clock.stop(); // Ferma clock
+    // --- Lifecycle & Debug ---
+    onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        if (this.composer) {
+            this.composer.setSize(window.innerWidth, window.innerHeight);
         }
     }
-
-    // --- Resource Management ---
-    cleanupResources() {
-        console.log("Cleaning up resources...");
-        
-        // Ferma gameloop
+    dispose() {
         cancelAnimationFrame(this.animationFrameId);
-        
-        // Rilascia controlli e event listeners
+        window.removeEventListener('resize', this.onWindowResize.bind(this));
         if (this.pointerLockControls) {
             this.pointerLockControls.disconnect();
         }
-        
-        window.removeEventListener('resize', this.handleWindowResize.bind(this));
-        document.removeEventListener('keydown', this.handleKeyDown.bind(this));
-        
-        // Cleanup audio
-        if (this.audioManager) {
-            this.audioManager.stopAll();
-        }
-        
-        // Pulisci geometrie e materiali
         if (this.scene) {
             this.scene.traverse(object => {
                 if (object.geometry) {
@@ -1331,66 +923,21 @@ export class GameIntegration {
                 }
             });
         }
-        
-        // Rilascia renderer e composer
         if (this.renderer) {
             this.renderer.dispose();
         }
-        
-        if (this.composer) {
-            this.composer.dispose();
+        if (this.audioManager) {
+            this.audioManager.stopAll();
         }
-        
-        console.log("Resources cleaned up");
+        console.log("Risorse del gioco liberate");
     }
-
-    // --- Debug ---
-    toggleDebugMode() {
-        this.options.debug = !this.options.debug;
-        console.log(`Debug mode: ${this.options.debug}`);
-        
-        if (this.options.debug) {
-            // Abilita display stats se disponibili
-            if (window.Stats) {
-                this.stats = new Stats();
-                document.body.appendChild(this.stats.dom);
-            }
-            
-            // Aggiungi helpers
-            if (this.scene) {
-                // Grid helper
-                const gridHelper = new THREE.GridHelper(1000, 100);
-                gridHelper.name = 'debugGridHelper';
-                this.scene.add(gridHelper);
-                
-                // Axes helper
-                const axesHelper = new THREE.AxesHelper(10);
-                axesHelper.name = 'debugAxesHelper';
-                axesHelper.position.set(0, 0.1, 0); // Leggero offset per evitare z-fighting con grid
-                this.scene.add(axesHelper);
-            }
-        } else {
-            // Rimuovi stats
-            if (this.stats) {
-                document.body.removeChild(this.stats.dom);
-                this.stats = null;
-            }
-            
-            // Rimuovi helpers
-            if (this.scene) {
-                const gridHelper = this.scene.getObjectByName('debugGridHelper');
-                if (gridHelper) this.scene.remove(gridHelper);
-                
-                const axesHelper = this.scene.getObjectByName('debugAxesHelper');
-                if (axesHelper) this.scene.remove(axesHelper);
-            }
-        }
-    }
-
-    // Metodo logger che usa il debug mode
-    log(message, force = false) {
-        if (this.options.debug || force) {
-            console.log(`[GameIntegration] ${message}`);
+    addDebugStats() {
+        if (!this.stats) {
+            this.stats = new Stats();
+            this.stats.dom.style.position = 'absolute';
+            this.stats.dom.style.top = '0px';
+            this.stats.dom.style.left = '0px';
+            this.container.appendChild(this.stats.dom);
         }
     }
 } 
