@@ -321,17 +321,28 @@ function createUniverseVisuals(systems, planets) {
     activeEnemies = []; // Resetta l'array dei nemici
 
     // Crea environment map (skybox) per lo sfondo stellato
-    const cubeTextureLoader = new THREE.CubeTextureLoader();
-    const environmentMap = cubeTextureLoader.load([
-        'public/textures/environment/px.png',
-        'public/textures/environment/nx.png',
-        'public/textures/environment/py.png',
-        'public/textures/environment/ny.png',
-        'public/textures/environment/pz.png',
-        'public/textures/environment/nz.png',
-    ]);
-    scene.background = environmentMap;
-    
+    try {
+        const cubeTextureLoader = new THREE.CubeTextureLoader();
+        const environmentMap = cubeTextureLoader.load([
+            'public/textures/environment/px.png',
+            'public/textures/environment/nx.png',
+            'public/textures/environment/py.png',
+            'public/textures/environment/ny.png',
+            'public/textures/environment/pz.png',
+            'public/textures/environment/nz.png',
+        ], 
+        undefined, 
+        undefined, 
+        function(err) { 
+            console.warn('Errore caricamento environment map, utilizzo colore nero di base', err);
+            scene.background = new THREE.Color(0x000000);
+        });
+        scene.background = environmentMap;
+    } catch {
+        console.warn('Environment map non disponibile, utilizzo colore nero di base');
+        scene.background = new THREE.Color(0x000000);
+    }
+
     // Crea effetto starfield di background (cielo stellato)
     createStarfieldBackground();
 
@@ -341,32 +352,37 @@ function createUniverseVisuals(systems, planets) {
     
     // Crea StarFlares (effetti luminosi per le stelle)
     const createStarFlare = (position, color, size) => {
-        const flareGeometry = new THREE.PlaneGeometry(size * 3, size * 3);
+        const flareGeometry = new THREE.PlaneGeometry(size * 5, size * 5);
         const flareMaterial = new THREE.MeshBasicMaterial({
-            map: new THREE.TextureLoader().load('public/textures/lensflare.png'),
             color: color,
             transparent: true,
             opacity: 0.6,
-            blending: THREE.AdditiveBlending,
             side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
             depthWrite: false
         });
         
         const flare = new THREE.Mesh(flareGeometry, flareMaterial);
         flare.position.copy(position);
         flare.lookAt(camera.position);
+        
+        // Aggiungi evento per far guardare il flare sempre verso la camera
+        flare.updateMatrix = function() {
+            this.lookAt(camera.position);
+            THREE.Object3D.prototype.updateMatrix.call(this);
+        };
+        
         scene.add(flare);
         return flare;
     };
 
     // Crea stelle
     systems.forEach(system => {
-        // Crea materiale luminoso per la stella
+        // Crea materiale luminoso per la stella, senza emissive che non è supportato in MeshBasicMaterial
         const starMaterial = new THREE.MeshBasicMaterial({ 
             color: system.starColor,
-            emissive: system.starColor,
-            emissiveIntensity: 1.5,
-            toneMapped: false
+            transparent: true,
+            opacity: 0.9
         });
         
         const starMesh = new THREE.Mesh(starGeometry, starMaterial);
@@ -374,13 +390,13 @@ function createUniverseVisuals(systems, planets) {
         starMesh.scale.setScalar(system.starSize * 6); // Stelle più grandi
         starMesh.userData.systemData = system;
         
-        // Crea point light per illuminare il sistema
-        const starLight = new THREE.PointLight(system.starColor, 1, 1000);
+        // Aggiungi luce per illuminare il sistema
+        const starLight = new THREE.PointLight(system.starColor, 1.5, 0, 2);
         starLight.position.copy(system.position);
         scene.add(starLight);
         
-        // Crea lens flare per la stella
-        createStarFlare(system.position, system.starColor, system.starSize * 10);
+        // Aggiungi effetto flare alla stella
+        createStarFlare(system.position, system.starColor, system.starSize * 2);
         
         scene.add(starMesh);
         starMeshes.push(starMesh);
@@ -409,48 +425,86 @@ function createUniverseVisuals(systems, planets) {
     // Crea pianeti e le loro difese
     planets.forEach(planetData => {
         // Scegli texture in base al tipo di pianeta
-        let diffuseTexture, bumpTexture;
+        let diffuseTexture = null;
+        let bumpTexture = null;
         
+        // Eliminiamo i try-catch per semplificare, ma gestiamo il controllo delle texture
         switch(planetData.type) {
             case 'rocky':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/mars.jpg');
-                bumpTexture = new THREE.TextureLoader().load('public/textures/mars-bump.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mars.jpg', 
+                    undefined, undefined, function() { console.warn('Errore caricamento texture mars.jpg'); });
+                // Carica il bump map solo se necessario e disponibile
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/mars-bump.jpg');
+                } catch {
+                    console.warn('Texture mars-bump.jpg non trovata, uso pianeta senza bump mapping');
+                }
                 break;
             case 'gas':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/jupiter.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/jupiter.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture jupiter.jpg'); });
                 break;
             case 'desert':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/mercury.jpg');
-                bumpTexture = new THREE.TextureLoader().load('public/textures/mercury-bump.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mercury.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture mercury.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/mercury-bump.jpg');
+                } catch {
+                    console.warn('Texture mercury-bump.jpg non trovata');
+                }
                 break;
             case 'ice':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/neptune.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/neptune.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture neptune.jpg'); });
                 break;
             case 'lava':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/venus.jpg');
-                bumpTexture = new THREE.TextureLoader().load('public/textures/venus-bump.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/venus.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture venus.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/venus-bump.jpg');
+                } catch {
+                    console.warn('Texture venus-bump.jpg non trovata');
+                }
                 break;
             case 'ocean':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg');
-                bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                } catch {
+                    console.warn('Texture earth-bump.jpg non trovata');
+                }
                 break;
             case 'forest':
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg');
-                bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                } catch {
+                    console.warn('Texture earth-bump.jpg non trovata');
+                }
                 break;
             default:
-                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg');
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
         }
         
-        // Crea materiale avanzato per i pianeti
+        // Crea materiale avanzato per i pianeti, solo con le texture disponibili
         const planetMaterial = new THREE.MeshPhongMaterial({
-            map: diffuseTexture,
             color: planetData.color,
             shininess: 30,
-            bumpMap: bumpTexture,
-            bumpScale: 0.05,
             specular: 0x333333
         });
+        
+        // Aggiungi texture solo se disponibili
+        if (diffuseTexture) {
+            planetMaterial.map = diffuseTexture;
+        }
+        
+        if (bumpTexture) {
+            planetMaterial.bumpMap = bumpTexture;
+            planetMaterial.bumpScale = 0.05;
+        }
         
         const planetMesh = new THREE.Mesh(planetGeometry, planetMaterial);
         planetMesh.position.copy(planetData.position);
@@ -480,12 +534,29 @@ function createUniverseVisuals(systems, planets) {
         // Aggiungi anelli per pianeti gassosi grandi (come Saturno)
         if (planetData.type === 'gas' && planetData.size > 3) {
             const ringsGeometry = new THREE.RingGeometry(1.5, 2.5, 64);
-            const ringsMaterial = new THREE.MeshPhongMaterial({
-                map: new THREE.TextureLoader().load('public/textures/saturn-ring.png'),
-                transparent: true,
-                opacity: 0.8,
-                side: THREE.DoubleSide
-            });
+            let ringsMaterial;
+            
+            try {
+                const ringTexture = new THREE.TextureLoader().load('public/textures/saturn-ring.png',
+                    undefined, undefined, function() { 
+                        console.warn('Texture saturn-ring.png non trovata, uso materiale semplice');
+                    });
+                    
+                ringsMaterial = new THREE.MeshPhongMaterial({
+                    map: ringTexture,
+                    transparent: true,
+                    opacity: 0.8,
+                    side: THREE.DoubleSide
+                });
+            } catch {
+                // Fallback a un materiale semplice se la texture non è disponibile
+                ringsMaterial = new THREE.MeshPhongMaterial({
+                    color: 0xcccccc,
+                    transparent: true,
+                    opacity: 0.6,
+                    side: THREE.DoubleSide
+                });
+            }
             
             const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
             rings.rotation.x = Math.PI / 2;
@@ -532,7 +603,7 @@ function createUniverseVisuals(systems, planets) {
 // --- Create Starfield Background ---
 function createStarfieldBackground() {
     // Crea un campo stellare di background
-    const starCount = 10000;
+    const starCount = 5000; // Ridotto da 10,000 a 5,000 per migliorare le performance
     const starGeometry = new THREE.BufferGeometry();
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
@@ -590,7 +661,6 @@ function createExitPortal() {
     const exitPortalGeometry = new THREE.TorusGeometry(10, 1, 16, 100);
     const exitPortalMaterial = new THREE.MeshPhongMaterial({
         color: 0x00ff00,
-        emissive: 0x00ff00,
         transparent: true,
         opacity: 0.8
     });
@@ -646,7 +716,6 @@ function createReturnPortal(refUrl) {
     const returnPortalGeometry = new THREE.TorusGeometry(10, 1, 16, 100);
     const returnPortalMaterial = new THREE.MeshPhongMaterial({
         color: 0xff0000, // Red color to distinguish from exit portal
-        emissive: 0xff0000,
         transparent: true,
         opacity: 0.8
     });
