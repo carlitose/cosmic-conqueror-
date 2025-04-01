@@ -138,7 +138,7 @@ export class GameIntegration {
 
             // 5. Player Controls (Già inizializzati in setup.js)
             // Inizializza i controlli player passando la camera e l'elemento DOM
-            initializeControls(this.camera, document.body).then(controls => {
+            initializeControls(this.camera, document.body).then(() => {
                 console.log("Player controls initialized through initializeControls");
             });
             
@@ -307,7 +307,7 @@ export class GameIntegration {
             // Re-init controlli se necessario
             if (!this.pointerLockControls?.isLocked) {
                 console.log("Re-checking player controls...");
-                initializeControls(this.camera, document.body).then(controls => {
+                initializeControls(this.camera, document.body).then(() => {
                     console.log("Player controls re-initialized");
                 });
             }
