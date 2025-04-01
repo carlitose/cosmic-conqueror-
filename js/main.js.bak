@@ -12,8 +12,7 @@ import { SolarSystem } from './space/SolarSystem.js';
 import { TerrainGenerator } from './planet/TerrainGenerator.js';
 import { SpaceCombat } from './combat/SpaceCombat.js';
 import { GroundCombat } from './combat/GroundCombat.js';
-// Rimuovo l'import non utilizzato
-// import { GameIntegration } from './GameIntegration.js';
+import { GameIntegration } from './GameIntegration.js';
 
 // --- Global Variables ---
 let scene, camera, renderer, controls;
@@ -40,7 +39,8 @@ let solarSystem = null;
 let terrainGenerator = null;
 let spaceCombat = null;
 let groundCombat = null;
-// Necessario per la gestione centralizzata dei moduli di gioco
+// gameIntegration è necessario per la gestione centralizzata dei moduli di gioco
+let gameIntegration = null;
 let gameMode = 'space'; // 'space', 'planet', 'space-combat', 'ground-combat'
 
 // UI Elements
@@ -458,7 +458,7 @@ function startGame(playerRace) {
 function createUniverseVisuals(systems, planets) {
     planetMeshes = [];
     starMeshes = [];
-    activeEnemies = []; // Reset enemy array
+    activeEnemies = []; // Resetta l'array dei nemici
 
     // Crea environment map (skybox) per lo sfondo stellato
     try {
@@ -483,22 +483,40 @@ function createUniverseVisuals(systems, planets) {
         scene.background = new THREE.Color(0x000000);
     }
 
-    // Crea starfield di background ottimizzato
+    // Crea effetto starfield di background (cielo stellato)
     createStarfieldBackground();
 
-    // Definisci livelli di geometria per il LOD dei pianeti
-    const planetLODGeometries = {
-        high: new THREE.SphereGeometry(1, 64, 64),   // Alta qualità per pianeti vicini
-        medium: new THREE.SphereGeometry(1, 32, 32), // Media qualità per distanza media
-        low: new THREE.SphereGeometry(1, 16, 16),    // Bassa qualità per pianeti lontani
-        ultraLow: new THREE.SphereGeometry(1, 8, 8)  // Qualità minima per pianeti molto lontani
+    // Usa geometria con più triangoli per stelle e pianeti
+    const planetGeometry = new THREE.SphereGeometry(1, 64, 64); 
+    const starGeometry = new THREE.SphereGeometry(1, 64, 64);
+    
+    // Crea StarFlares (effetti luminosi per le stelle)
+    const createStarFlare = (position, color, size) => {
+        const flareGeometry = new THREE.PlaneGeometry(size * 5, size * 5);
+        const flareMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.6,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        
+        const flare = new THREE.Mesh(flareGeometry, flareMaterial);
+        flare.position.copy(position);
+        flare.lookAt(camera.position);
+        
+        // RIMUOVO la sovrascrittura di updateMatrix che causa ricorsione infinita
+        // Invece, segniamo il flare per aggiornamento manuale in ogni frame
+        flare.userData.isFlare = true;
+        
+        scene.add(flare);
+        return flare;
     };
-    
-    const starGeometry = new THREE.SphereGeometry(1, 64, 32);
-    
-    // Crea le stelle con effetti luminosi
+
+    // Crea stelle
     systems.forEach(system => {
-        // Crea materiala luminoso per la stella
+        // Crea materiale luminoso per la stella, senza emissive che non è supportato in MeshBasicMaterial
         const starMaterial = new THREE.MeshBasicMaterial({ 
             color: system.starColor,
             transparent: true,
@@ -507,7 +525,7 @@ function createUniverseVisuals(systems, planets) {
         
         const starMesh = new THREE.Mesh(starGeometry, starMaterial);
         starMesh.position.copy(system.position);
-        starMesh.scale.setScalar(system.starSize * 6);
+        starMesh.scale.setScalar(system.starSize * 6); // Stelle più grandi
         starMesh.userData.systemData = system;
         
         // Aggiungi luce per illuminare il sistema
@@ -542,116 +560,217 @@ function createUniverseVisuals(systems, planets) {
         });
     });
 
-    // Crea i pianeti con LOD per ottimizzare le prestazioni
-    createPlanetsWithLOD(planets, planetLODGeometries);
+    // Usa Level of Detail (LOD) per i pianeti distanti
+    createPlanetsWithLOD(planets, planetGeometry);
 }
 
 // --- Creare pianeti con Level of Detail ---
-function createPlanetsWithLOD(planets, geometries) {
+function createPlanetsWithLOD(planets, highDetailGeometry) {
     planets.forEach(planetData => {
-        // Seleziona texture in base al tipo di pianeta
+        // Crea geometrie a diversi livelli di dettaglio
+        const highLOD = highDetailGeometry;
+        const medLOD = new THREE.SphereGeometry(1, 32, 32);
+        const lowLOD = new THREE.SphereGeometry(1, 16, 16);
+        
+        // Scegli texture in base al tipo di pianeta
         let diffuseTexture = null;
         let bumpTexture = null;
-        let hasBumpMap = false;
         
-        try {
-            switch(planetData.type) {
-                case 'rocky':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/mars.jpg');
-                    try {
-                        bumpTexture = new THREE.TextureLoader().load('public/textures/planets/mars-bump.jpg');
-                        hasBumpMap = true;
-                    } catch {
-                        console.warn('Bump texture not available for rocky planet');
-                    }
-                    break;
-                case 'gas':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/jupiter.jpg');
-                    break;
-                case 'desert':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/mercury.jpg');
-                    break;
-                case 'ice':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/ice.jpg');
-                    break;
-                case 'lava':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/lava.jpg');
-                    break;
-                case 'ocean':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/water.jpg');
-                    break;
-                case 'forest':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/earth.jpg');
-                    break;
-                default:
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/earth.jpg');
-            }
-        } catch (e) {
-            console.error('Error loading textures for planet type: ' + planetData.type, e);
-            // Fallback: pianeta colorato senza texture
-            diffuseTexture = null;
+        // Eliminiamo i try-catch per semplificare, ma gestiamo il controllo delle texture
+        switch(planetData.type) {
+            case 'rocky':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mars.jpg', 
+                    undefined, undefined, function() { console.warn('Errore caricamento texture mars.jpg'); });
+                // Carica il bump map solo se necessario e disponibile
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/mars-bump.jpg');
+                } catch {
+                    console.warn('Texture mars-bump.jpg non trovata, uso pianeta senza bump mapping');
+                }
+                break;
+            case 'gas':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/jupiter.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture jupiter.jpg'); });
+                break;
+            case 'desert':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mercury.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture mercury.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/mercury-bump.jpg');
+                } catch {
+                    console.warn('Texture mercury-bump.jpg non trovata');
+                }
+                break;
+            case 'ice':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/neptune.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture neptune.jpg'); });
+                break;
+            case 'lava':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/venus.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture venus.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/venus-bump.jpg');
+                } catch {
+                    console.warn('Texture venus-bump.jpg non trovata');
+                }
+                break;
+            case 'ocean':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                } catch {
+                    console.warn('Texture earth-bump.jpg non trovata');
+                }
+                break;
+            case 'forest':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                } catch {
+                    console.warn('Texture earth-bump.jpg non trovata');
+                }
+                break;
+            default:
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
         }
         
-        // Crea materiale con o senza texture
+        // Crea materiale avanzato per i pianeti, solo con le texture disponibili
         const planetMaterial = new THREE.MeshPhongMaterial({
-            color: diffuseTexture ? 0xffffff : planetData.color,
-            map: diffuseTexture,
-            bumpMap: hasBumpMap ? bumpTexture : null,
-            bumpScale: hasBumpMap ? 0.05 : 0,
-            shininess: 5
+            color: planetData.color,
+            shininess: 30,
+            specular: 0x333333
         });
         
-        // Crea meshes per ogni livello di dettaglio
-        const highMesh = new THREE.Mesh(geometries.high, planetMaterial.clone());
-        const mediumMesh = new THREE.Mesh(geometries.medium, planetMaterial.clone());
-        const lowMesh = new THREE.Mesh(geometries.low, planetMaterial.clone());
-        const ultraLowMesh = new THREE.Mesh(geometries.ultraLow, planetMaterial.clone());
+        // Aggiungi texture solo se disponibili
+        if (diffuseTexture) {
+            planetMaterial.map = diffuseTexture;
+        }
         
-        // Configura LOD (Level of Detail)
+        if (bumpTexture) {
+            planetMaterial.bumpMap = bumpTexture;
+            planetMaterial.bumpScale = 0.05;
+        }
+        
+        // Crea il LOD
         const lod = new THREE.LOD();
         
-        // Distanze dinamiche in base alla dimensione del pianeta
-        const sizeFactor = planetData.size;
-        lod.addLevel(highMesh, 0);                    // Dettaglio alto quando vicino
-        lod.addLevel(mediumMesh, sizeFactor * 50);    // Dettaglio medio a distanza media
-        lod.addLevel(lowMesh, sizeFactor * 150);      // Dettaglio basso a distanza alta
-        lod.addLevel(ultraLowMesh, sizeFactor * 300); // Dettaglio minimo quando molto lontano
+        // Aggiungi i livelli
+        const highMesh = new THREE.Mesh(highLOD, planetMaterial);
+        const medMesh = new THREE.Mesh(medLOD, planetMaterial.clone());
+        const lowMesh = new THREE.Mesh(lowLOD, planetMaterial.clone());
         
-        // Posiziona e configura il LOD
+        // Semplifica i materiali per i livelli più lontani
+        medMesh.material.bumpMap = null;
+        lowMesh.material.bumpMap = null;
+        
+        // Aggiungi i livelli al LOD, la distanza è relativa al diametro del pianeta
+        lod.addLevel(highMesh, 0);                         // Vicino
+        lod.addLevel(medMesh, planetData.size * 50);       // Medio
+        lod.addLevel(lowMesh, planetData.size * 150);      // Lontano
+        
+        // Posiziona il LOD
         lod.position.copy(planetData.position);
-        lod.scale.setScalar(planetData.size);
+        lod.scale.setScalar(planetData.size * 2);
         lod.userData.planetData = planetData;
+        lod.castShadow = true;
+        lod.receiveShadow = true;
         
-        // Aggiungi atmosfera per pianeti specifici
-        if (['rocky', 'forest', 'ocean'].includes(planetData.type)) {
-            const atmosphere = createPlanetAtmosphere(planetData);
-            if (atmosphere) {
-                lod.add(atmosphere);
-            }
+        // Aggiungi atmosfera per certi tipi di pianeti
+        if (planetData.type === 'gas' || planetData.type === 'ocean' || planetData.type === 'forest') {
+            const atmosphereGeometry = new THREE.SphereGeometry(1.015, 32, 32);
+            const atmosphereColor = planetData.type === 'gas' ? 0xffffcc : 0x8888ff;
+            const atmosphereMaterial = new THREE.MeshPhongMaterial({
+                color: atmosphereColor,
+                transparent: true,
+                opacity: 0.3,
+                side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            
+            const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+            atmosphere.scale.setScalar(1);
+            highMesh.add(atmosphere.clone());
+            medMesh.add(atmosphere.clone());
+            // Non aggiungere l'atmosfera al modello lowLOD per risparmiare risorse
         }
         
-        // Anelli per pianeti giganti
-        if (planetData.type === 'gas' && planetData.size > 15) {
-            const rings = createPlanetRings(planetData);
-            if (rings) {
-                lod.add(rings);
-            }
-        }
-        
-        // Sistemi di difesa in base al valore difensivo
-        if (planetData.defense > 30) {
-            createPlanetaryDefenses(lod, planetData);
+        // Aggiungi anelli per pianeti gassosi grandi (come Saturno)
+        if (planetData.type === 'gas' && planetData.size > 3) {
+            // Aggiungi gli anelli solo ai livelli di dettaglio alto e medio
+            addRingsToMesh(highMesh, 1);
+            addRingsToMesh(medMesh, 1);
+            // Non aggiungere anelli al modello lowLOD
         }
         
         scene.add(lod);
         planetMeshes.push(lod);
+        
+        // --- Genera Difese Planetarie ---
+        if (!planetData.isConquered) {
+            const numDefenses = Math.floor(planetData.defense / 10);
+            for (let i = 0; i < numDefenses; i++) {
+                // Posiziona nemici sulla superficie del pianeta
+                const enemyType = Math.random() < 0.7 ? 'drone' : 'turret';
+                const planetRadius = planetData.size * 2;
+                
+                // Punto casuale sulla sfera del pianeta
+                const phi = Math.acos(2 * Math.random() - 1);
+                const theta = Math.random() * Math.PI * 2;
+                
+                const enemyLocalPos = new THREE.Vector3();
+                enemyLocalPos.setFromSphericalCoords(planetRadius + (enemyType === 'turret' ? 2 : 3), phi, theta);
+                
+                const enemyWorldPos = new THREE.Vector3().copy(planetData.position).add(enemyLocalPos);
+                
+                const enemy = new Enemy(enemyType, enemyWorldPos, planetData);
+                const enemyMesh = enemy.createMesh();
+                
+                // Orienta la torretta verso l'esterno del pianeta
+                if (enemyType === 'turret') {
+                   enemyMesh.lookAt(planetData.position);
+                   enemyMesh.rotateX(Math.PI / 2); // Correggi orientamento cilindro
+                }
+                
+                scene.add(enemyMesh);
+                activeEnemies.push(enemy);
+            }
+        }
     });
+}
+
+// Funzione helper per aggiungere anelli ai pianeti
+function addRingsToMesh(mesh, scale) {
+    const ringsGeometry = new THREE.RingGeometry(1.5, 2.5, 32);
+    const ringsMaterial = new THREE.MeshPhongMaterial({
+        color: 0xcccccc,
+        transparent: true,
+        opacity: 0.6,
+        side: THREE.DoubleSide
+    });
+    
+    try {
+        const ringTexture = new THREE.TextureLoader().load('public/textures/saturn-ring.png');
+        if (ringTexture) {
+            ringsMaterial.map = ringTexture;
+        }
+    } catch (error) {
+        console.warn("Errore caricamento texture anelli:", error);
+    }
+    
+    const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
+    rings.rotation.x = Math.PI / 2;
+    rings.scale.setScalar(scale);
+    mesh.add(rings);
 }
 
 // --- Create Starfield Background ---
 function createStarfieldBackground() {
     // Crea un campo stellare di background molto più leggero
-    const starCount = 2000; // Ridotto da 5000 a 2000 per migliorare significativamente le performance
+    const starCount = 2000; // Ulteriormente ridotto
     const starGeometry = new THREE.BufferGeometry();
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
@@ -660,7 +779,7 @@ function createStarfieldBackground() {
         const i3 = i * 3;
         
         // Posizione stellare (sfera molto grande)
-        const radius = 2000 + Math.random() * 3000; // Ridotto raggio per concentrare le stelle
+        const radius = 2000 + Math.random() * 3000; // Ridotto raggio
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         
@@ -668,7 +787,7 @@ function createStarfieldBackground() {
         starPositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
         starPositions[i3 + 2] = radius * Math.cos(phi);
         
-        // Colore stellare semplificato (bianco con variazioni minori per ridurre calcoli)
+        // Colore stellare semplificato (bianco con variazioni minori)
         starColors[i3] = 0.9 + Math.random() * 0.1;
         starColors[i3 + 1] = 0.9 + Math.random() * 0.1;
         starColors[i3 + 2] = 0.9 + Math.random() * 0.1;
@@ -810,8 +929,8 @@ function animate() {
     try {
         requestAnimationFrame(animate);
         
-        // Aggiorna monitor prestazioni
-        performanceMonitor.update();
+        // Monitora le performance
+        monitorPerformance();
         
         const time = performance.now();
         const delta = (time - prevTime) / 1000;
@@ -819,10 +938,21 @@ function animate() {
         // Non aggiornare se il gioco non è iniziato, se il puntatore non è bloccato o se è Game Over
         if (!player || !controls.isLocked || isGameOver) { 
             prevTime = time;
-            renderer.render(scene, camera); // Rendering diretto in stato di pausa
+            renderer.render(scene, camera); // Use direct rendering in paused state
             return; 
         }
 
+        // --- Throttling per task pesanti ---
+        // Suddividiamo le operazioni in vari frame per mantenere FPS costanti
+        
+        // --- Frustum Culling (ogni 1000ms in low quality) ---
+        const cullingInterval = isLowQualityMode ? 1000 : 500;
+        const shouldUpdateFrustum = time - lastFrustumCheck > cullingInterval;
+        if (shouldUpdateFrustum) {
+            updateFrustumCulling();
+            lastFrustumCheck = time;
+        }
+        
         // --- Update Player (ogni frame) --- 
         const cameraDirection = new THREE.Vector3();
         camera.getWorldDirection(cameraDirection);
@@ -831,44 +961,51 @@ function animate() {
         // Mantieni la telecamera sincronizzata con la posizione del giocatore
         controls.getObject().position.copy(player.position);
 
-        // --- Frustum Culling (ogni 500ms, in low quality meno spesso) ---
-        const cullingInterval = performanceMonitor.lowQualityMode ? 1000 : 500;
-        const shouldUpdateFrustum = time - lastFrustumCheck > cullingInterval;
-        if (shouldUpdateFrustum) {
-            updateFrustumCulling();
-            lastFrustumCheck = time;
-        }
-        
-        // --- Game mode update (in low quality con frequenza ridotta) ---
-        if (!performanceMonitor.lowQualityMode || performanceMonitor.frameCount % 3 === 0) {
+        // --- Aggiorna game mode solo in normal quality o ogni 3 frame in low quality
+        if (!isLowQualityMode || frameCount % 3 === 0) {
             updateActiveGameMode(delta);
         }
 
-        // --- Enemies update (priorità basata su distanza) ---
+        // --- Update Enemies (priorità basata su distanza) ---
         const playerPosition = player.position;
         for (let i = activeEnemies.length - 1; i >= 0; i--) {
             const enemy = activeEnemies[i];
             if (!enemy.isActive) {
-                // Cleanup nemico inattivo
-                enemy.removeFromScene(scene);
+                // Rimuovi nemico inattivo
+                if (enemy.mesh) {
+                    scene.remove(enemy.mesh);
+                    if (enemy.mesh.geometry) {
+                        enemy.mesh.geometry.dispose();
+                    }
+                    if (enemy.mesh.material) {
+                        if (Array.isArray(enemy.mesh.material)) {
+                            enemy.mesh.material.forEach(m => m.dispose());
+                        } else {
+                            enemy.mesh.material.dispose();
+                        }
+                    }
+                }
                 activeEnemies.splice(i, 1);
                 continue;
             }
             
-            // Ottimizzazione basata su distanza
-            const distance = enemy.mesh ? enemy.mesh.position.distanceTo(playerPosition) : 1000;
-            
-            let shouldUpdate = false;
-            if (performanceMonitor.lowQualityMode) {
-                // In low quality, aggiorna solo nemici molto vicini
-                shouldUpdate = distance < 50 || (performanceMonitor.frameCount % 10 === 0 && distance < 200);
-            } else {
-                // In normal quality, aggiornamento standard in base a distanza
+            // Distanza dal giocatore
+            const distance = enemy.mesh ? 
+                enemy.mesh.position.distanceTo(playerPosition) : 1000;
+                
+            // Aggiorna solo i nemici molto vicini ogni frame in low quality
+            let shouldUpdate = distance < 50;
+                
+            if (!isLowQualityMode) {
+                // In normal quality, regular distance-based update
                 shouldUpdate = distance < 100 || 
                     (distance < 500 && time % 100 < 20) || 
                     (time % 500 < 20);
+            } else {
+                // In low quality, only update close enemies or occasionally
+                shouldUpdate = distance < 50 || (frameCount % 10 === 0 && distance < 200);
             }
-            
+                
             if (shouldUpdate) {
                 const enemyProjectileData = enemy.update(delta, player);
                 if (enemyProjectileData) {
@@ -880,47 +1017,51 @@ function animate() {
         // --- Update Projectiles ---
         updateProjectiles(delta);
         
-        // --- Star flares (in low quality aggiorna meno frequentemente) ---
-        const flareInterval = performanceMonitor.lowQualityMode ? 300 : 100;
+        // --- Update Star Flares (meno spesso in low quality) ---
+        const flareInterval = isLowQualityMode ? 300 : 100;
         if (time % flareInterval < 20) {
             updateStarFlares();
         }
 
-        // --- Other updates: Interactions, UI (meno frequenti in low quality) ---
-        const checkInterval = performanceMonitor.lowQualityMode ? 500 : 200;
-        if (time % checkInterval < 20) {
-            updateTargetIndicator();
+        // --- Target Indicator - sempre aggiorna ---
+        updateTargetIndicator();
+
+        // --- Check Interactions (ogni 500ms) ---
+        if (time % 500 < 20) {
             checkPlanetInteraction();
             checkPortalInteraction();
         }
-        
-        if (time % 300 < 20) {
+
+        // --- Update UI (ogni 500ms) ---
+        if (time % 500 < 20) {
             updateUI();
         }
 
-        // --- Memory cleanup (ogni 300 frame) ---
-        if (performanceMonitor.frameCount % 300 === 0) {
-            // Pulizia texture e cache
-            THREE.Cache.clear();
-            if (collisionCache) collisionCache.clear();
+        // Pulizia occasionale delle risorse
+        if (frameCount % 300 === 0) {
+            cleanupUnusedResources(); 
         }
 
         // --- Rendering ---
-        if (performanceMonitor.lowQualityMode) {
-            // Rendering diretto senza effetti in low quality
+        if (isLowQualityMode) {
+            // In low quality, use direct rendering
             renderer.render(scene, camera);
         } else {
-            // Rendering con effetti in normal quality
+            // In normal quality, use composer with effects
             composer.render();
         }
         
         prevTime = time;
-    } catch (error) {
-        console.error("Error in animation loop:", error);
-        // Passa a modalità emergenza in caso di errore
-        if (!performanceMonitor.lowQualityMode) {
+    } catch (e) {
+        console.error("Error in animation loop:", e);
+        // In caso di errore, passa a una modalità estremamente leggera
+        if (!isLowQualityMode) {
             console.warn("Switching to emergency low quality mode due to error");
-            performanceMonitor.enableLowQuality();
+            enableLowQualityMode();
+            
+            // Disattiva tutte le caratteristiche non essenziali
+            disableDynamicLights();
+            cleanupUnusedResources();
         }
     }
 }
@@ -1775,7 +1916,8 @@ function initializeIntegratedModules() {
     spaceCombat = new SpaceCombat(scene, camera, player);
     groundCombat = new GroundCombat(scene, camera, gameOptions.groundCombat);
     
-    // Il sistema di gestione centrale è stato rimosso perché non utilizzato
+    // Inizializza il sistema di gestione centrale
+    gameIntegration = new GameIntegration(gameOptions);
     
     // Collega moduli esistenti e nuovi moduli
     linkLegacyAndNewModules();
@@ -1826,9 +1968,9 @@ function updateStarFlares() {
     });
 }
 
-// --- Frustum Culling Ottimizzato ---
+// --- Frustum Culling ---
 function updateFrustumCulling() {
-    // Crea il frustum (volume di vista) della telecamera
+    // Crea un frustum basato sulla camera
     const frustum = new THREE.Frustum();
     const matrix = new THREE.Matrix4().multiplyMatrices(
         camera.projectionMatrix,
@@ -1836,102 +1978,35 @@ function updateFrustumCulling() {
     );
     frustum.setFromProjectionMatrix(matrix);
     
-    // Distanza massima oltre la quale gli oggetti sono sempre nascosti
-    const maxVisibleDistance = performanceMonitor.lowQualityMode ? 3000 : 8000;
-    
-    // Verifica pianeti
-    planetMeshes.forEach(planetMesh => {
-        if (!planetMesh.userData.planetData) return;
-        
-        const distance = planetMesh.position.distanceTo(camera.position);
-        const size = planetMesh.userData.planetData.size;
-        
-        // Rendi visibile solo se nel frustum e entro la distanza massima
-        // Per pianeti grandi aumentiamo la distanza di visibilità
-        const isVisible = (
-            distance < maxVisibleDistance * (size / 10 + 1) && 
-            (frustum.intersectsObject(planetMesh) || distance < size * 30)
-        );
-        
-        // Aggiorna visibilità
-        planetMesh.visible = isVisible;
-        
-        // Se il pianeta è lontano, disattiva le simulazioni fisiche
-        if (planetMesh.userData.physicsBody) {
-            planetMesh.userData.physicsBody.sleep = !isVisible;
+    // Controlla i pianeti
+    planetMeshes.forEach(planet => {
+        // Per i LOD, Three.js gestisce automaticamente quale livello mostrare
+        // Ma possiamo disabilitare completamente quelli fuori dal frustum
+        if (planet instanceof THREE.LOD) {
+            const planetPosition = planet.position;
+            const planetSize = planet.scale.x;
+            const boundingSphere = new THREE.Sphere(planetPosition, planetSize * 1.5);
+            
+            planet.visible = frustum.intersectsSphere(boundingSphere);
         }
     });
     
-    // Verifica stelle
-    starMeshes.forEach(starMesh => {
-        if (!starMesh.userData.systemData) return;
+    // Controlla le stelle - disabilita quelle fuori dal frustum
+    starMeshes.forEach(star => {
+        const starPosition = star.position;
+        const starSize = star.scale.x;
+        const boundingSphere = new THREE.Sphere(starPosition, starSize);
         
-        const distance = starMesh.position.distanceTo(camera.position);
-        const starSize = starMesh.userData.systemData.starSize;
-        
-        // Le stelle sono visibili a distanze maggiori
-        const maxStarVisibleDistance = maxVisibleDistance * 1.5;
-        const isVisible = (
-            distance < maxStarVisibleDistance * (starSize + 1) &&
-            (frustum.intersectsObject(starMesh) || distance < starSize * 100)
-        );
-        
-        starMesh.visible = isVisible;
-        
-        // Aggiorna anche le luci associate alle stelle
-        starMesh.children.forEach(child => {
-            if (child instanceof THREE.Light) {
-                child.visible = isVisible;
-                
-                // In low quality mode, riduci intensità delle luci
-                if (performanceMonitor.lowQualityMode && isVisible) {
-                    child.intensity = 0.7;
-                }
-            }
-        });
+        star.visible = frustum.intersectsSphere(boundingSphere);
     });
     
-    // Verifica nemici attivi
+    // Controlla i nemici - disabilita quelli fuori dal frustum
     activeEnemies.forEach(enemy => {
-        if (!enemy.mesh) return;
-        
-        const distance = enemy.mesh.position.distanceTo(camera.position);
-        
-        // I nemici sono visibili solo a brevi distanze
-        const enemyVisibleDistance = performanceMonitor.lowQualityMode ? 300 : 500;
-        const isVisible = (
-            distance < enemyVisibleDistance && 
-            frustum.intersectsObject(enemy.mesh)
-        );
-        
-        enemy.mesh.visible = isVisible;
-        
-        // Gestisci l'attivazione/disattivazione dei nemici per risparmiare risorse
-        enemy.isActive = isVisible;
-    });
-    
-    // Verifica anche altri oggetti con molti poligoni
-    scene.traverse(object => {
-        // Ignora oggetti già processati
-        if (
-            planetMeshes.includes(object) || 
-            starMeshes.includes(object) || 
-            activeEnemies.some(e => e.mesh === object)
-        ) {
-            return;
-        }
-        
-        // Processa solo mesh con molti poligoni
-        if (
-            object.isMesh && 
-            object.geometry && 
-            object.geometry.attributes && 
-            object.geometry.attributes.position && 
-            object.geometry.attributes.position.count > 1000
-        ) {
-            const distance = object.position.distanceTo(camera.position);
-            const isVisible = distance < maxVisibleDistance && frustum.intersectsObject(object);
-            object.visible = isVisible;
+        if (enemy.mesh) {
+            const enemyPosition = enemy.mesh.position;
+            const boundingSphere = new THREE.Sphere(enemyPosition, 10); // Approssimazione
+            
+            enemy.mesh.visible = frustum.intersectsSphere(boundingSphere);
         }
     });
 }
@@ -1966,281 +2041,221 @@ function optimizedCollisionCheck(object1, object2, cacheKey) {
 // --- Global Variables ---
 // ... existing code ...
 
-// Performance monitoring
-let performanceMonitor = {
-    fpsHistory: [],
-    lastFrameTime: 0,
-    frameCount: 0,
-    lowQualityMode: false,
-    
-    update: function() {
-        const now = performance.now();
-        if (this.lastFrameTime > 0) {
-            const delta = now - this.lastFrameTime;
-            const fps = 1000 / delta;
-            
-            // Mantieni gli ultimi 10 campioni
-            this.fpsHistory.push(fps);
-            if (this.fpsHistory.length > 10) {
-                this.fpsHistory.shift();
-            }
-            
-            // Log ogni 100 frame
-            if (this.frameCount % 100 === 0) {
-                console.log(`Performance: ${this.getAverageFPS().toFixed(2)} FPS (Quality: ${this.lowQualityMode ? 'LOW' : 'NORMAL'})`);
-            }
-            
-            // Verifica se cambiare modalità
-            this.checkQualityMode();
-            
-            this.frameCount++;
+// Performance monitor
+let fpsHistory = [];
+const FPS_SAMPLE_SIZE = 10;
+let lastFrameTime = 0;
+let isLowQualityMode = false;
+let frameCount = 0;
+
+// --- Performance Monitoring ---
+function monitorPerformance() {
+    const now = performance.now();
+    if (lastFrameTime > 0) {
+        const delta = now - lastFrameTime;
+        const fps = 1000 / delta;
+        
+        // Aggiungi all'history e mantieni solo gli ultimi N campioni
+        fpsHistory.push(fps);
+        if (fpsHistory.length > FPS_SAMPLE_SIZE) {
+            fpsHistory.shift();
         }
         
-        this.lastFrameTime = now;
-    },
-    
-    getAverageFPS: function() {
-        if (this.fpsHistory.length === 0) return 60;
-        return this.fpsHistory.reduce((sum, val) => sum + val, 0) / this.fpsHistory.length;
-    },
-    
-    checkQualityMode: function() {
-        const avgFps = this.getAverageFPS();
+        // Calcola FPS medio
+        const avgFps = fpsHistory.reduce((sum, val) => sum + val, 0) / fpsHistory.length;
         
-        // Switch to low quality if FPS drops below 20
-        if (avgFps < 20 && !this.lowQualityMode) {
-            this.enableLowQuality();
-        } 
-        // Try to switch back to normal quality occasionally
-        else if (avgFps > 40 && this.lowQualityMode && this.frameCount % 300 === 0) {
-            this.enableNormalQuality();
-        }
-    },
-    
-    enableLowQuality: function() {
-        console.warn("Enabling LOW QUALITY mode to improve performance");
-        this.lowQualityMode = true;
-        
-        // Riduzione distanza visiva
-        camera.far = 5000;
-        camera.updateProjectionMatrix();
-        
-        // Disattiva effetti di post-processing
-        if (composer) {
-            composer.passes.forEach(pass => {
-                if (pass instanceof UnrealBloomPass) {
-                    pass.enabled = false;
-                }
-            });
+        // Aggiusta quality in base all'FPS
+        if (avgFps < 20 && !isLowQualityMode) {
+            enableLowQualityMode();
+        } else if (avgFps > 40 && isLowQualityMode && frameCount % 300 === 0) {
+            // Prova a tornare a qualità normale solo occasionalmente
+            disableLowQualityMode();
         }
         
-        // Riduzione particelle
-        scene.traverse(object => {
-            if (object instanceof THREE.Points) {
-                if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
-                    const newSize = Math.floor(object.geometry.attributes.position.count / 2);
-                    object.geometry.setDrawRange(0, newSize);
-                }
-            }
-        });
-        
-        // Riduzione luci
-        this.reduceLights();
-    },
-    
-    enableNormalQuality: function() {
-        console.warn("Switching back to NORMAL quality mode");
-        this.lowQualityMode = false;
-        
-        // Ripristina distanza visiva
-        camera.far = 20000;
-        camera.updateProjectionMatrix();
-        
-        // Riattiva effetti
-        if (composer) {
-            composer.passes.forEach(pass => {
-                if (pass instanceof UnrealBloomPass) {
-                    pass.enabled = true;
-                }
-            });
+        // Log delle performance ogni 100 frame
+        if (frameCount % 100 === 0) {
+            console.log(`Performance: ${avgFps.toFixed(2)} FPS (Quality: ${isLowQualityMode ? 'LOW' : 'NORMAL'})`);
         }
-        
-        // Ripristina particelle
-        scene.traverse(object => {
-            if (object instanceof THREE.Points) {
-                if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
-                    object.geometry.setDrawRange(0, Infinity);
-                }
-            }
-        });
-    },
+    }
     
-    reduceLights: function() {
-        // Trova e riduce intensità luci
-        let mainLightFound = false;
-        scene.traverse(object => {
-            if (object instanceof THREE.PointLight || object instanceof THREE.SpotLight) {
-                if (!mainLightFound) {
-                    mainLightFound = true;
-                    // Riduce intensità della luce principale
-                    object.intensity *= 0.7;
-                } else {
-                    // Disattiva completamente altre luci
-                    object.intensity = 0;
-                }
+    lastFrameTime = now;
+    frameCount++;
+}
+
+function enableLowQualityMode() {
+    console.warn("Enabling LOW QUALITY mode to improve performance");
+    isLowQualityMode = true;
+    
+    // Disattiva post-processing
+    if (composer) {
+        composer.passes.forEach(pass => {
+            if (pass instanceof UnrealBloomPass) {
+                pass.enabled = false;
             }
         });
     }
-};
-
-// --- Helper per effetti visivi dei pianeti ---
-
-// Crea flare (effetto luminoso) per le stelle
-function createStarFlare(position, color, size) {
-    const flareGeometry = new THREE.PlaneGeometry(size * 5, size * 5);
-    const flareMaterial = new THREE.MeshBasicMaterial({
-        color: color,
-        transparent: true,
-        opacity: 0.6,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+    
+    // Riduci distanza di vista
+    camera.far = 5000;
+    camera.updateProjectionMatrix();
+    
+    // Riduci numero di particelle e objetti
+    scene.traverse(object => {
+        if (object instanceof THREE.Points) {
+            if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
+                // Riduci particelle visibili al 50%
+                const newSize = Math.floor(object.geometry.attributes.position.count / 2);
+                object.geometry.setDrawRange(0, newSize);
+            }
+        }
     });
     
-    const flare = new THREE.Mesh(flareGeometry, flareMaterial);
-    flare.position.copy(position);
-    flare.lookAt(camera.position);
-    
-    // Indica che il flare deve essere aggiornato manualmente in ogni frame
-    flare.userData.isFlare = true;
-    
-    scene.add(flare);
-    return flare;
+    // Disattiva effetti estremi
+    disableDynamicLights();
 }
 
-// Crea l'atmosfera per un pianeta
-function createPlanetAtmosphere(planetData) {
-    // Crea geometria leggermente più grande del pianeta
-    const atmosphereGeometry = new THREE.SphereGeometry(1.05, 32, 32);
+function disableLowQualityMode() {
+    console.warn("Trying to restore NORMAL QUALITY mode");
+    isLowQualityMode = false;
     
-    // Scegli colore atmosfera in base al tipo di pianeta
-    let atmosphereColor;
-    let opacity = 0.3;
-    
-    switch(planetData.type) {
-        case 'forest':
-        case 'ocean':
-            atmosphereColor = 0x88aaff; // Blu per pianeti con acqua/vegetazione
-            opacity = 0.4;
-            break;
-        case 'rocky':
-            atmosphereColor = 0xffaa88; // Rosa/arancio per pianeti rocciosi
-            opacity = 0.2;
-            break;
-        default:
-            return null; // Altri tipi di pianeti non hanno atmosfera visibile
+    // Riattiva post-processing
+    if (composer) {
+        composer.passes.forEach(pass => {
+            if (pass instanceof UnrealBloomPass) {
+                pass.enabled = true;
+            }
+        });
     }
     
-    // Crea materiale semitrasparente per l'atmosfera
-    const atmosphereMaterial = new THREE.MeshBasicMaterial({
-        color: atmosphereColor,
-        transparent: true,
-        opacity: opacity,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-    });
+    // Ripristina distanza di vista
+    camera.far = 20000;
+    camera.updateProjectionMatrix();
     
-    // Crea la mesh dell'atmosfera
-    const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
-    return atmosphere;
+    // Ripristina numero di particelle e objetti
+    scene.traverse(object => {
+        if (object instanceof THREE.Points) {
+            if (object.geometry && object.geometry.attributes && object.geometry.attributes.position) {
+                object.geometry.setDrawRange(0, Infinity);
+            }
+        }
+    });
 }
 
-// Crea anelli per pianeti giganti gassosi
-function createPlanetRings(planetData) {
-    if (planetData.type !== 'gas') return null;
-    
-    const innerRadius = 1.4;
-    const outerRadius = 2.5;
-    const segments = 64;
-    
-    const ringsGeometry = new THREE.RingGeometry(innerRadius, outerRadius, segments);
-    const ringsMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.6,
-        side: THREE.DoubleSide
+function disableDynamicLights() {
+    // Trova e disattiva tutte le luci dinamiche tranne quella principale
+    let mainLightFound = false;
+    scene.traverse(object => {
+        if (object instanceof THREE.PointLight || object instanceof THREE.SpotLight) {
+            if (!mainLightFound) {
+                mainLightFound = true;
+                // Riduce intensità della luce principale
+                object.intensity *= 0.7;
+            } else {
+                // Disattiva completamente altre luci
+                object.intensity = 0;
+            }
+        }
     });
+}
+
+// --- Memory Management System ---
+function cleanupUnusedResources() {
+    // Rimuovi le cache non necessarie
+    collisionCache.clear();
     
-    try {
-        // Cerca di caricare texture per gli anelli
-        const ringTexture = new THREE.TextureLoader().load('public/textures/planets/saturn-ring.png');
-        ringsMaterial.map = ringTexture;
-        ringsMaterial.needsUpdate = true;
-    } catch {
-        // Se la texture non è disponibile, utilizziamo il colore base
-        console.warn("Errore caricamento texture anelli, utilizzo colore base");
+    // Pulizia di TextureLoader
+    THREE.Cache.clear();
+
+    // Raccolta forzata
+    if (typeof window.gc === 'function') {
+        try {
+            window.gc();
+        } catch (e) {
+            console.log('Manual GC not available');
+        }
     }
-    
-    const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
-    rings.rotation.x = Math.PI / 2; // Ruota per avere anelli orizzontali
-    
-    return rings;
 }
 
-// Crea sistemi di difesa planetari in base al valore di difesa
-function createPlanetaryDefenses(planetLOD, planetData) {
-    if (!planetData || planetData.isConquered || planetData.defense < 30) return;
+// --- Optimized createStarfieldBackground ---
+function createStarfieldBackground() {
+    // Crea un campo stellare di background molto più leggero
+    const starCount = 2000; // Ulteriormente ridotto
+    const starGeometry = new THREE.BufferGeometry();
+    const starPositions = new Float32Array(starCount * 3);
+    const starColors = new Float32Array(starCount * 3);
     
-    // Numero di difese in base al livello di difesa
-    const numDefenses = Math.floor(planetData.defense / 20);
-    
-    for (let i = 0; i < numDefenses; i++) {
-        // Alternare tra droni e torrette
-        const enemyType = i % 2 === 0 ? 'drone' : 'turret';
+    for (let i = 0; i < starCount; i++) {
+        const i3 = i * 3;
         
-        // Punto casuale sulla sfera del pianeta
-        const phi = Math.acos(2 * Math.random() - 1);
+        // Posizione stellare (sfera molto grande)
+        const radius = 2000 + Math.random() * 3000; // Ridotto raggio
         const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
         
-        // Posizione relativa sulla superficie + una piccola distanza
-        const surfacePos = new THREE.Vector3();
-        const offsetDistance = enemyType === 'turret' ? 0.05 : 0.1;
-        surfacePos.setFromSphericalCoords(1 + offsetDistance, phi, theta);
+        starPositions[i3] = radius * Math.sin(phi) * Math.cos(theta);
+        starPositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+        starPositions[i3 + 2] = radius * Math.cos(phi);
         
-        // Posizione del nemico nel sistema di coordinate del pianeta
-        const enemyLocalPos = surfacePos.clone();
-        
-        // Crea geometria base per la difesa
-        let defenseGeometry, defenseMaterial;
-        
-        if (enemyType === 'turret') {
-            defenseGeometry = new THREE.CylinderGeometry(0.02, 0.03, 0.1, 8);
-            defenseMaterial = new THREE.MeshPhongMaterial({ color: 0x888888 });
-        } else {
-            defenseGeometry = new THREE.SphereGeometry(0.02, 8, 8);
-            defenseMaterial = new THREE.MeshPhongMaterial({ color: 0xaa3333 });
-        }
-        
-        const defenseMesh = new THREE.Mesh(defenseGeometry, defenseMaterial);
-        defenseMesh.position.copy(enemyLocalPos);
-        
-        // Orienta la difesa verso l'esterno del pianeta
-        defenseMesh.lookAt(surfacePos.clone().multiplyScalar(2));
-        
-        // Aggiungi al pianeta
-        planetLOD.add(defenseMesh);
-        
-        // Crea enemy solo se nel range di visione del giocatore
-        if (performanceMonitor.lowQualityMode === false) {
-            const enemyWorldPos = new THREE.Vector3()
-                .copy(planetData.position)
-                .add(surfacePos.clone().multiplyScalar(planetData.size));
-            
-            const enemy = new Enemy(enemyType, enemyWorldPos, planetData);
-            enemy.createMesh();
-            enemy.mesh.visible = false; // Lo rendiamo invisibile, usiamo solo i modelli visivi
-            activeEnemies.push(enemy);
-        }
+        // Colore stellare semplificato (bianco con variazioni minori)
+        starColors[i3] = 0.9 + Math.random() * 0.1;
+        starColors[i3 + 1] = 0.9 + Math.random() * 0.1;
+        starColors[i3 + 2] = 0.9 + Math.random() * 0.1;
     }
+    
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+    
+    const starMaterial = new THREE.PointsMaterial({
+        size: 2,
+        vertexColors: true,
+        sizeAttenuation: false, // Disabilita per migliorare performance
+        transparent: true,
+        depthWrite: false
+    });
+    
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
+}
+
+// --- Improved LOD for planets ---
+function createPlanetsWithLOD(planets, highDetailGeometry) {
+    planets.forEach(planetData => {
+        // Crea geometrie a livelli di dettaglio molto più bassi
+        const highLOD = highDetailGeometry;
+        const medLOD = new THREE.SphereGeometry(1, 24, 24);
+        const lowLOD = new THREE.SphereGeometry(1, 12, 12);
+        const ultraLowLOD = new THREE.SphereGeometry(1, 8, 8);
+        
+        // ... (resto del codice di caricamento texture)
+        
+        // Crea il LOD con distanze di transizione più aggressive
+        const lod = new THREE.LOD();
+        
+        // Aggiungi i livelli con distanze ridotte
+        lod.addLevel(highMesh, 0);                      // Vicino
+        lod.addLevel(medMesh, planetData.size * 30);    // Medio (ridotto da 50)
+        lod.addLevel(lowMesh, planetData.size * 80);    // Lontano (ridotto da 150)
+        lod.addLevel(new THREE.Mesh(ultraLowLOD, planetMaterial.clone()), planetData.size * 150); // Extra lontano
+        
+        // Il resto rimane uguale
+    });
+}
+
+// Modifica al metodo per creare esplosioni
+function createExplosionEffect(position, scale = 1, color = 0xff8800) {
+    // In low quality mode, molto meno particelle e durata ridotta
+    if (isLowQualityMode) {
+        const particles = 5; // Solo 5 particelle in low quality
+        const effectDuration = 0.2; // Durata più breve
+        
+        // ... resto del codice con le modifiche
+    } else {
+        // Implementazione normale
+        const particles = 20;
+        const effectDuration = 0.5;
+        
+        // ... normale implementazione
+    }
+    
+    // ... resto del codice
 }
