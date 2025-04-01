@@ -1,4 +1,6 @@
 import { GameIntegration } from './GameIntegration.js';
+// Importa le costanti se servono qui, altrimenti verranno usate internamente
+// import { CONSTANTS } from './constants.js'; // Esempio
 
 /**
  * Punto di ingresso principale del gioco
@@ -7,14 +9,15 @@ import { GameIntegration } from './GameIntegration.js';
  * GameIntegration che gestisce tutti gli altri moduli del gioco.
  */
 document.addEventListener('DOMContentLoaded', () => {
-    // Trova il container del gioco
     const gameContainer = document.getElementById('game-container');
     if (!gameContainer) {
-        console.error("Elemento container del gioco non trovato!");
+        console.error("Game container element not found! ID='game-container'");
+        // Mostra un messaggio all'utente nell'HTML
+        document.body.innerHTML = '<div style="color: red; padding: 20px;">Errore critico: Impossibile trovare il contenitore del gioco (#game-container).</div>';
         return;
     }
 
-    // Crea una configurazione in base all'ambiente
+    // Opzioni di configurazione iniziali
     const gameOptions = {
         targetFPS: 60,
         quality: window.innerWidth < 1024 ? 'low' : 'normal',
@@ -22,39 +25,36 @@ document.addEventListener('DOMContentLoaded', () => {
         debug: window.location.search.includes('debug=true')
     };
 
-    console.log("Inizializzazione gioco con opzioni:", gameOptions);
+    console.log("Initializing game with options:", gameOptions);
 
-    // Crea l'istanza del gioco
+    // Crea l'istanza principale
     const game = new GameIntegration(gameOptions);
 
     // Inizializza il gioco
     game.initialize(gameContainer)
         .then(() => {
-            console.log("Gioco inizializzato con successo!");
+            console.log("Game Initialized Successfully!");
             
-            // Aggiungi handler per la chiusura della pagina
+            // Aggiungi handler per la pulizia prima di chiudere la pagina
             window.addEventListener('beforeunload', () => {
                 game.dispose();
             });
 
-            // Esponi l'istanza di gioco globalmente solo per debug
+            // Esponi globalmente per debug se necessario
             if (gameOptions.debug) {
                 window.gameInstance = game;
-                console.log("Debug mode attiva: l'istanza di gioco è disponibile come window.gameInstance");
+                console.log("Debug mode active: game instance available as window.gameInstance");
             }
         })
         .catch(error => {
-            console.error("Errore durante l'inizializzazione:", error);
+            console.error("Failed to initialize game:", error);
             
-            // Mostra un messaggio di errore all'utente
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'error-message';
-            errorDiv.innerHTML = `
-                <h2>Errore di inizializzazione</h2>
-                <p>Si è verificato un errore durante l'avvio del gioco.</p>
-                <p>Dettaglio: ${error.message || 'Errore sconosciuto'}</p>
-                <button onclick="location.reload()">Riprova</button>
-            `;
-            gameContainer.appendChild(errorDiv);
+            // Mostra un messaggio di errore più visibile
+            gameContainer.innerHTML = `<div class="error-message">
+                <h2>Initialization Error</h2>
+                <p>An error occurred while starting the game.</p>
+                <p>Details: ${error.message || 'Unknown error'}</p>
+                <button onclick="location.reload()">Retry</button>
+            </div>`;
         });
 });
