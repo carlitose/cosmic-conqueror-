@@ -512,6 +512,8 @@ function animate() {
     const cameraDirection = new THREE.Vector3();
     camera.getWorldDirection(cameraDirection);
     player.update(delta, moveForward, moveBackward, moveLeft, moveRight, moveUp, moveDown, cameraDirection);
+    
+    // Mantieni la telecamera sincronizzata con la posizione del giocatore
     controls.getObject().position.copy(player.position);
 
     // --- Update based on game mode ---

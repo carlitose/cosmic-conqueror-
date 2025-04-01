@@ -78,7 +78,7 @@ export class Player {
     }
     
     /**
-     * Aggiorna la posizione e stato del giocatore
+     * Aggiorna la posizione e lo stato del giocatore
      * @param {number} deltaTime - Tempo trascorso dall'ultimo frame
      * @param {boolean} moveForward - Se il giocatore sta andando avanti
      * @param {boolean} moveBackward - Se il giocatore sta andando indietro
@@ -98,84 +98,60 @@ export class Player {
         // Resetta velocità
         this.velocity.set(0, 0, 0);
         
-        // Aggiungi movimento in base agli input
+        // Approccio semplificato: usiamo direttamente la direzione della camera
+        // per determinare il movimento forward/backward
+        const forward = cameraDirection.clone().normalize();
+        // Forziamo il movimento orizzontale annullando la componente Y
+        forward.y = 0;
+        forward.normalize();
+        
+        // Calcola il vettore destro perpendicolare alla direzione forward
+        const right = new THREE.Vector3();
+        right.crossVectors(new THREE.Vector3(0, 1, 0), forward);
+        
+        // Applica movimento in base agli input
         if (moveForward) {
-            this.velocity.z -= actualSpeed;
+            // Quando premi W, vai nella direzione in cui stai guardando
+            this.velocity.add(forward.clone().multiplyScalar(actualSpeed));
         }
         if (moveBackward) {
-            this.velocity.z += actualSpeed;
+            // Quando premi S, vai nella direzione opposta
+            this.velocity.add(forward.clone().multiplyScalar(-actualSpeed));
         }
         if (moveLeft) {
-            this.velocity.x -= actualSpeed;
+            // Quando premi A, vai a sinistra rispetto alla direzione in cui guardi
+            this.velocity.add(right.clone().multiplyScalar(actualSpeed));
         }
         if (moveRight) {
-            this.velocity.x += actualSpeed;
+            // Quando premi D, vai a destra rispetto alla direzione in cui guardi
+            this.velocity.add(right.clone().multiplyScalar(-actualSpeed));
         }
         
         // Movimento verticale (volo)
         if (this.isFlying) {
             if (moveUp) {
-                this.velocity.y += actualSpeed;
-            }
-            if (moveDown) {
-                this.velocity.y -= actualSpeed;
+                this.velocity.y = actualSpeed;
+            } else if (moveDown) {
+                this.velocity.y = -actualSpeed;
+            } else {
+                this.velocity.y = 0;
             }
         } else {
-            // Gravità se non in volo (gestita dal PointerLockControls)
-            // Non applichiamo gravità manualmente qui se usiamo controls
+            this.velocity.y = 0;
         }
         
-        // Applica movimento in base alla direzione della camera
-        if (cameraDirection) {
-            // Applichiamo il movimento relativo alla camera
-            // NOTA: PointerLockControls applica già il movimento relativo alla camera.
-            //       Duplicare la logica qui potrebbe causare problemi.
-            //       Verifichiamo se il movimento è già gestito correttamente.
-            //       Per ora, commentiamo l'applicazione manuale della rotazione.
-            
-            // const cameraRotation = new THREE.Quaternion().setFromEuler(
-            //     new THREE.Euler(0, cameraDirection.y, 0) // Usiamo solo la rotazione Y? No, la direzione è già nel world space
-            // );
-            // this.velocity.applyQuaternion(cameraRotation); // Applica la rotazione della camera alla velocità
-            
-             // Applicazione movimento basata su PointerLockControls (più standard)
-             const direction = new THREE.Vector3();
-             if (moveForward) direction.z = -1;
-             if (moveBackward) direction.z = 1;
-             if (moveLeft) direction.x = -1;
-             if (moveRight) direction.x = 1;
-             direction.normalize(); // Assicura movimento diagonale non più veloce
-             
-             // Applica la velocità alla direzione desiderata
-             this.velocity.x = direction.x * actualSpeed;
-             this.velocity.z = direction.z * actualSpeed;
-             
-             // Gestione movimento verticale (indipendente dalla direzione orizzontale)
-             if (this.isFlying) {
-                 if (moveUp) this.velocity.y = actualSpeed;
-                 else if (moveDown) this.velocity.y = -actualSpeed;
-                 else this.velocity.y = 0; // Nessun movimento verticale se non premuto
-             } else {
-                 // Potremmo gestire il salto qui, ma PointerLockControls ha una sua logica
-                 // Per ora, assumiamo che il movimento verticale non-volo sia gestito altrove o non necessario
-                 this.velocity.y = 0;
-             }
-
-        }
+        // Debug info
+        console.log("Camera direction:", cameraDirection);
+        console.log("Forward vector:", forward);
+        console.log("Right vector:", right);
+        console.log("Velocity:", this.velocity);
         
-        // Aggiorna posizione (viene fatto da controls.moveForward/moveRight)
-        // this.position.add(this.velocity * deltaTime); // Non più necessario se usiamo controls.move*
+        // Applica effettivamente il movimento
+        this.position.add(this.velocity);
         
-        // Imposta altezza minima (ground check) - Potrebbe non essere più necessario
-        // if (this.position.y < 2) {
-        //     this.position.y = 2;
-        //     this.isFlying = false;
-        // }
-        
-        // Aggiorna mesh se esiste (dovrebbe seguire la camera)
+        // Aggiorna mesh se esiste
         if (this.mesh) {
             this.mesh.position.copy(this.position);
-            // La mesh dovrebbe ruotare con la camera? Probabilmente no in prima persona.
         }
     }
     
