@@ -7,10 +7,10 @@ import { Player } from './player.js';
 import {
     initializeUIManager, setPlayer as setUiPlayer, showCharacterSelection, hideCharacterSelection,
     showGameOver, hideGameOver, updateUI, showPlanetInfo, hidePlanetInfo,
-    closeUpgradesScreen, closeLegendScreen, showMessage
+    closeUpgradesScreen, closeLegendScreen, showMessage, openUpgradesScreen, openLegendScreen
 } from './uiManager.js';
-import { initAudioPool, playSound } from './audioManager.js';
-import { getMovementState } from './playerControls.js';
+import { initAudioPool, playSound, ensureAudioExists } from './audioManager.js';
+import { getMovementState, disposeControls } from './playerControls.js';
 import { SolarSystem } from './space/SolarSystem.js';
 import { TerrainGenerator } from './planet/TerrainGenerator.js';
 import { SpaceCombat } from './combat/SpaceCombat.js';
@@ -53,7 +53,9 @@ export class GameIntegration {
             planets: [],
             uiState: {
                 inventoryOpen: false,
-                mapOpen: false
+                mapOpen: false,
+                upgradesOpen: false,
+                legendOpen: false
             }
         };
 
@@ -101,7 +103,13 @@ export class GameIntegration {
             this.clock = new THREE.Clock();
 
             // 2. Inizializza Performance Monitor
-            performanceMonitor.initialize(this.scene, this.camera, this.renderer, this.composer, document.getElementById(UI_ELEMENTS.FPS_SELECT));
+            performanceMonitor.initialize(
+                this.scene,
+                this.camera,
+                this.renderer,
+                this.composer,
+                document.getElementById(UI_ELEMENTS.FPS_SELECT)
+            );
             performanceMonitor.setTargetFPS(this.options.targetFPS);
             if (this.options.quality === 'low') {
                 performanceMonitor.enableLowQuality();
@@ -110,6 +118,15 @@ export class GameIntegration {
 
             // 3. Inizializza Audio Manager
             initAudioPool();
+            // Carica suoni specifici mancanti
+            ensureAudioExists('enemy_shoot');
+            ensureAudioExists('energy_wave_sound');
+            ensureAudioExists('laser_sound');
+            ensureAudioExists('success');
+            ensureAudioExists('failure');
+            ensureAudioExists('upgrade');
+            ensureAudioExists('error');
+            ensureAudioExists('teleport');
 
             // 4. Inizializza UI Manager (con callbacks)
             initializeUIManager({
@@ -164,7 +181,6 @@ export class GameIntegration {
         try {
             // 1. Crea Player e informa UI/Combat
             this.player = new Player(playerRace);
-            this.player.setRace(playerRace);
             this.player.createMesh();
             setUiPlayer(this.player);
             this.spaceCombat.player = this.player;
@@ -871,25 +887,40 @@ export class GameIntegration {
 
     // --- Gestione Input Globale ---
     handleKeyDown(event) {
-        if (this.state.isGameOver || this.state.isPaused) return;
-        if (!this.pointerLockControls?.isLocked && !['KeyU', 'KeyL'].includes(event.code)) return;
+        // Gestisci prima gli shortcut UI che sbloccano il cursore
+        if (event.code === 'KeyU') {
+            this.state.uiState.upgradesOpen ? closeUpgradesScreen() : openUpgradesScreen();
+            this.state.uiState.upgradesOpen = !this.state.uiState.upgradesOpen;
+            this.pointerLockControls.isLocked ? this.pointerLockControls.unlock() : this.pointerLockControls.lock();
+            return; // Non processare altro
+        }
+        if (event.code === 'KeyL') {
+            this.state.uiState.legendOpen ? closeLegendScreen() : openLegendScreen();
+            this.state.uiState.legendOpen = !this.state.uiState.legendOpen;
+            this.pointerLockControls.isLocked ? this.pointerLockControls.unlock() : this.pointerLockControls.lock();
+            return;
+        }
+        // Aggiungere M per Mappa, I per Inventario, Escape per Pausa qui se implementate
 
+        // Se il gioco è in pausa o terminato, o il cursore è sbloccato (e non è un tasto UI), ignora altri input
+        if (this.state.isGameOver || this.state.isPaused || !this.pointerLockControls?.isLocked) return;
+
+        // Altri input gestiti solo se il lock è attivo
         switch (event.code) {
-            case 'KeyU': this.uiManager.openUpgradesScreen(); break;
-            case 'KeyL': this.uiManager.openLegendScreen(); break;
             case 'KeyE':
-                 if (this.state.mode === GAME_MODES.SPACE && this.state.activePlanet) {
-                      if (!this.state.activePlanet.isConquered) {
-                          this.attemptConquerPlanet();
-                      } else {
-                           console.log("Landing on planet:", this.state.activePlanet.name);
-                           this.setGameMode(GAME_MODES.PLANET, { planet: this.state.activePlanet });
-                      }
-                 } else if (this.state.mode === GAME_MODES.PLANET) {
-                      console.log("Leaving planet...");
-                      this.setGameMode(GAME_MODES.SPACE);
-                 }
-                 break;
+                if (this.state.mode === GAME_MODES.SPACE && this.state.activePlanet) {
+                    if (!this.state.activePlanet.isConquered) {
+                        this.attemptConquerPlanet();
+                    } else {
+                        console.log("Landing on planet:", this.state.activePlanet.name);
+                        this.setGameMode(GAME_MODES.PLANET, { planet: this.state.activePlanet });
+                    }
+                } else if (this.state.mode === GAME_MODES.PLANET) {
+                    console.log("Leaving planet...");
+                    this.setGameMode(GAME_MODES.SPACE);
+                }
+                break;
+            // Aggiungere altri tasti azione specifici del gioco (es. cambio arma, abilità)
         }
     }
 
@@ -903,33 +934,17 @@ export class GameIntegration {
         }
     }
     dispose() {
-        cancelAnimationFrame(this.animationFrameId);
+        console.log("Disposing GameIntegration resources...");
+        this.stopGameLoop();
         window.removeEventListener('resize', this.onWindowResize.bind(this));
-        if (this.pointerLockControls) {
-            this.pointerLockControls.disconnect();
-        }
-        if (this.scene) {
-            this.scene.traverse(object => {
-                if (object.geometry) {
-                    object.geometry.dispose();
-                }
-                
-                if (object.material) {
-                    if (Array.isArray(object.material)) {
-                        object.material.forEach(material => material.dispose());
-                    } else {
-                        object.material.dispose();
-                    }
-                }
-            });
-        }
-        if (this.renderer) {
-            this.renderer.dispose();
-        }
-        if (this.audioManager) {
-            this.audioManager.stopAll();
-        }
-        console.log("Risorse del gioco liberate");
+        document.removeEventListener('player-attack', this.handlePlayerAttack.bind(this));
+        document.removeEventListener('keydown', this.handleKeyDown.bind(this));
+        
+        disposeControls(); // Chiama funzione da playerControls
+        
+        // Rilascia altre risorse...
+        
+        console.log("Game resources disposed.");
     }
     addDebugStats() {
         if (!this.stats) {

@@ -104,12 +104,17 @@ function createDummyAudio(name, instances) {
 }
 
 /**
- * Assicura che un tipo di audio esista nel pool
- * @param {string} name - Nome dell'audio
+ * Verifica che un suono esista o ne crea uno dummy
+ * @param {string} soundId - Identificatore del suono
  */
-export function ensureAudioExists(name) {
-    if (!audioPool[name] || audioPool[name].length === 0) {
-        createDummyAudio(name, 3);
+export function ensureAudioExists(soundId) {
+    if (!audioPool[soundId]) {
+        console.log(`Ensuring audio exists: ${soundId}`);
+        // Carica il suono o crea un dummy audio
+        loadSound(soundId, `assets/audio/${soundId}.mp3`).catch(error => {
+            console.warn(`Couldn't load sound ${soundId}, creating dummy sound`, error);
+            createDummyAudio(soundId, 3);
+        });
     }
 }
 
@@ -177,52 +182,64 @@ export function playSound(name, volume = 1.0) {
  * @param {string} name - Nome del suono
  * @param {string} src - Path del file audio
  * @param {number} instances - Numero di istanze da creare
+ * @returns {Promise} Promise che si risolve quando il suono è caricato
  */
 export function loadSound(name, src, instances = 3) {
     // Se esiste già, non ricaricare
     if (audioPool[name] && audioPool[name].length > 0) {
         console.log(`Suono ${name} già caricato`);
-        return;
+        return Promise.resolve(audioPool[name]);
     }
     
-    audioPool[name] = [];
-    
-    // Controlla se il browser supporta Web Audio API
-    if (!window.AudioContext && !window.webkitAudioContext) {
-        console.warn('Audio API non supportata dal browser');
-        createDummyAudio(name, instances);
-        return;
-    }
-    
-    let loadedAudio = false;
-    
-    for (let i = 0; i < instances; i++) {
-        try {
-            const audio = new Audio();
-            
-            audio.addEventListener('error', function(e) {
-                console.warn(`Errore caricamento audio ${name}: ${e.target.error ? e.target.error.message : 'Errore sconosciuto'}`);
-                if (audioPool[name].length === 0) {
-                    createDummyAudio(name, 1);
-                }
-            });
-            
-            audio.preload = 'auto';
-            audio.src = src;
-            
-            audioPool[name].push({
-                element: audio,
-                inUse: false
-            });
-            
-            loadedAudio = true;
-        } catch (e) {
-            console.warn(`Impossibile creare l'audio ${name}:`, e);
+    console.log(`Caricamento suono ${name} da ${src}`);
+    return new Promise((resolve, reject) => {
+        audioPool[name] = [];
+        
+        // Controlla se il browser supporta Audio API
+        if (!window.Audio) {
+            console.warn('Audio API non supportata dal browser');
+            createDummyAudio(name, instances);
+            reject(new Error('Audio API non supportata'));
+            return;
         }
-    }
-    
-    // Se non è stato possibile caricare nessun audio, crea un dummy
-    if (!loadedAudio) {
-        createDummyAudio(name, instances);
-    }
+        
+        let loadedAudio = false;
+        
+        for (let i = 0; i < instances; i++) {
+            try {
+                const audio = new Audio();
+                
+                audio.addEventListener('error', function(e) {
+                    console.warn(`Errore caricamento audio ${name}: ${e.target.error ? e.target.error.message : 'Errore sconosciuto'}`);
+                    if (audioPool[name].length === 0) {
+                        createDummyAudio(name, 1);
+                    }
+                    if (!loadedAudio && i === instances - 1) {
+                        reject(new Error(`Errore caricamento audio ${name}`));
+                    }
+                });
+                
+                audio.addEventListener('canplaythrough', function() {
+                    loadedAudio = true;
+                    if (i === instances - 1) {
+                        resolve(audioPool[name]);
+                    }
+                }, { once: true });
+                
+                audio.preload = 'auto';
+                audio.src = src;
+                
+                audioPool[name].push({
+                    element: audio,
+                    inUse: false
+                });
+            } catch (e) {
+                console.warn(`Impossibile creare l'audio ${name}:`, e);
+                if (i === instances - 1 && !loadedAudio) {
+                    createDummyAudio(name, instances);
+                    reject(e);
+                }
+            }
+        }
+    });
 } 
