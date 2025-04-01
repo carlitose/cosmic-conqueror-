@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 // SimplexNoise viene importato altrove
 // import * as SimplexNoise from 'simplex-noise';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { UniverseGenerator } from './universe.js';
 import { Player } from './player.js';
 import { Enemy } from './enemy.js';
@@ -19,6 +22,7 @@ let planetMeshes = []; // Array per memorizzare le mesh dei pianeti
 let starMeshes = [];   // Array per memorizzare le mesh delle stelle
 let exitPortalGroup, exitPortalBox;
 let returnPortalGroup, returnPortalBox;
+let composer; // Renderer composer con effetti
 
 let activeEnemies = []; // Array per i nemici attivi
 let targetIndicatorArrow = null; // <-- Nuovo: Freccia indicatore
@@ -81,6 +85,9 @@ function init() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.getElementById('game-container').appendChild(renderer.domElement);
+
+    // --- Post-processing Effects ---
+    composer = initializeRendererEffects();
 
     // --- Lighting ---
     const ambientLight = new THREE.AmbientLight(0x404040, 0.5); // Luce ambientale più soffusa
@@ -313,39 +320,185 @@ function createUniverseVisuals(systems, planets) {
     starMeshes = [];
     activeEnemies = []; // Resetta l'array dei nemici
 
-    const planetGeometry = new THREE.SphereGeometry(1, 32, 32); 
-    const starGeometry = new THREE.SphereGeometry(1, 32, 32);
+    // Crea environment map (skybox) per lo sfondo stellato
+    const cubeTextureLoader = new THREE.CubeTextureLoader();
+    const environmentMap = cubeTextureLoader.load([
+        'public/textures/environment/px.png',
+        'public/textures/environment/nx.png',
+        'public/textures/environment/py.png',
+        'public/textures/environment/ny.png',
+        'public/textures/environment/pz.png',
+        'public/textures/environment/nz.png',
+    ]);
+    scene.background = environmentMap;
+    
+    // Crea effetto starfield di background (cielo stellato)
+    createStarfieldBackground();
+
+    // Usa geometria con più triangoli per stelle e pianeti
+    const planetGeometry = new THREE.SphereGeometry(1, 64, 64); 
+    const starGeometry = new THREE.SphereGeometry(1, 64, 64);
+    
+    // Crea StarFlares (effetti luminosi per le stelle)
+    const createStarFlare = (position, color, size) => {
+        const flareGeometry = new THREE.PlaneGeometry(size * 3, size * 3);
+        const flareMaterial = new THREE.MeshBasicMaterial({
+            map: new THREE.TextureLoader().load('public/textures/lensflare.png'),
+            color: color,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        
+        const flare = new THREE.Mesh(flareGeometry, flareMaterial);
+        flare.position.copy(position);
+        flare.lookAt(camera.position);
+        scene.add(flare);
+        return flare;
+    };
 
     // Crea stelle
     systems.forEach(system => {
-        const starMaterial = new THREE.MeshBasicMaterial({ color: system.starColor });
+        // Crea materiale luminoso per la stella
+        const starMaterial = new THREE.MeshBasicMaterial({ 
+            color: system.starColor,
+            emissive: system.starColor,
+            emissiveIntensity: 1.5,
+            toneMapped: false
+        });
+        
         const starMesh = new THREE.Mesh(starGeometry, starMaterial);
         starMesh.position.copy(system.position);
-        starMesh.scale.setScalar(system.starSize * 5); // Scala per visibilità
-        starMesh.userData.systemData = system; // Salva i dati del sistema nella mesh
+        starMesh.scale.setScalar(system.starSize * 6); // Stelle più grandi
+        starMesh.userData.systemData = system;
+        
+        // Crea point light per illuminare il sistema
+        const starLight = new THREE.PointLight(system.starColor, 1, 1000);
+        starLight.position.copy(system.position);
+        scene.add(starLight);
+        
+        // Crea lens flare per la stella
+        createStarFlare(system.position, system.starColor, system.starSize * 10);
+        
         scene.add(starMesh);
         starMeshes.push(starMesh);
+        
+        // Crea percorsi orbitali
+        system.planets.forEach(planetData => {
+            const orbitGeometry = new THREE.RingGeometry(
+                planetData.orbitRadius - 0.1, 
+                planetData.orbitRadius + 0.1, 
+                64
+            );
+            const orbitMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.1,
+                side: THREE.DoubleSide 
+            });
+            
+            const orbit = new THREE.Mesh(orbitGeometry, orbitMaterial);
+            orbit.rotation.x = Math.PI / 2;
+            orbit.position.copy(system.position);
+            scene.add(orbit);
+        });
     });
 
     // Crea pianeti e le loro difese
     planets.forEach(planetData => {
-        const planetMaterial = new THREE.MeshStandardMaterial({
+        // Scegli texture in base al tipo di pianeta
+        let diffuseTexture, bumpTexture;
+        
+        switch(planetData.type) {
+            case 'rocky':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mars.jpg');
+                bumpTexture = new THREE.TextureLoader().load('public/textures/mars-bump.jpg');
+                break;
+            case 'gas':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/jupiter.jpg');
+                break;
+            case 'desert':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mercury.jpg');
+                bumpTexture = new THREE.TextureLoader().load('public/textures/mercury-bump.jpg');
+                break;
+            case 'ice':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/neptune.jpg');
+                break;
+            case 'lava':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/venus.jpg');
+                bumpTexture = new THREE.TextureLoader().load('public/textures/venus-bump.jpg');
+                break;
+            case 'ocean':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg');
+                bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                break;
+            case 'forest':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg');
+                bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                break;
+            default:
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg');
+        }
+        
+        // Crea materiale avanzato per i pianeti
+        const planetMaterial = new THREE.MeshPhongMaterial({
+            map: diffuseTexture,
             color: planetData.color,
-            roughness: 0.8,
-            metalness: 0.2
+            shininess: 30,
+            bumpMap: bumpTexture,
+            bumpScale: 0.05,
+            specular: 0x333333
         });
+        
         const planetMesh = new THREE.Mesh(planetGeometry, planetMaterial);
         planetMesh.position.copy(planetData.position);
         planetMesh.scale.setScalar(planetData.size * 2); // Scala per visibilità
         planetMesh.castShadow = true;
         planetMesh.receiveShadow = true;
         planetMesh.userData.planetData = planetData; 
+        
+        // Aggiungi atmosfera per certi tipi di pianeti
+        if (planetData.type === 'gas' || planetData.type === 'ocean' || planetData.type === 'forest') {
+            const atmosphereGeometry = new THREE.SphereGeometry(1.015, 64, 64);
+            const atmosphereColor = planetData.type === 'gas' ? 0xffffcc : 0x8888ff;
+            const atmosphereMaterial = new THREE.MeshPhongMaterial({
+                color: atmosphereColor,
+                transparent: true,
+                opacity: 0.3,
+                side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            
+            const atmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+            atmosphere.scale.setScalar(planetData.size * 2);
+            planetMesh.add(atmosphere);
+        }
+        
+        // Aggiungi anelli per pianeti gassosi grandi (come Saturno)
+        if (planetData.type === 'gas' && planetData.size > 3) {
+            const ringsGeometry = new THREE.RingGeometry(1.5, 2.5, 64);
+            const ringsMaterial = new THREE.MeshPhongMaterial({
+                map: new THREE.TextureLoader().load('public/textures/saturn-ring.png'),
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            });
+            
+            const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
+            rings.rotation.x = Math.PI / 2;
+            rings.scale.setScalar(planetData.size * 2);
+            planetMesh.add(rings);
+        }
+        
         scene.add(planetMesh);
         planetMeshes.push(planetMesh);
         
         // --- Genera Difese Planetarie ---
         if (!planetData.isConquered) {
-            const numDefenses = Math.floor(planetData.defense / 10); // Numero difese basato sulla forza
+            const numDefenses = Math.floor(planetData.defense / 10);
             for (let i = 0; i < numDefenses; i++) {
                 // Posiziona nemici sulla superficie del pianeta
                 const enemyType = Math.random() < 0.7 ? 'drone' : 'turret';
@@ -374,6 +527,57 @@ function createUniverseVisuals(systems, planets) {
             }
         }
     });
+}
+
+// --- Create Starfield Background ---
+function createStarfieldBackground() {
+    // Crea un campo stellare di background
+    const starCount = 10000;
+    const starGeometry = new THREE.BufferGeometry();
+    const starPositions = new Float32Array(starCount * 3);
+    const starColors = new Float32Array(starCount * 3);
+    const starSizes = new Float32Array(starCount);
+    
+    for (let i = 0; i < starCount; i++) {
+        const i3 = i * 3;
+        
+        // Posizione stellare (sfera molto grande)
+        const radius = 5000 + Math.random() * 5000;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        
+        starPositions[i3] = radius * Math.sin(phi) * Math.cos(theta);
+        starPositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+        starPositions[i3 + 2] = radius * Math.cos(phi);
+        
+        // Colore stellare (bianco con variazioni)
+        const color = new THREE.Color();
+        const hue = Math.random();
+        const saturation = Math.random() * 0.3;
+        color.setHSL(hue, saturation, 0.9 + Math.random() * 0.1);
+        
+        starColors[i3] = color.r;
+        starColors[i3 + 1] = color.g;
+        starColors[i3 + 2] = color.b;
+        
+        // Dimensione stellare
+        starSizes[i] = Math.random() * 3;
+    }
+    
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+    starGeometry.setAttribute('size', new THREE.BufferAttribute(starSizes, 1));
+    
+    const starMaterial = new THREE.PointsMaterial({
+        size: 2,
+        sizeAttenuation: true,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false
+    });
+    
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
 }
 
 // --- Portal Creation (Simplified for now) ---
@@ -504,7 +708,7 @@ function animate() {
     // Non aggiornare se il gioco non è iniziato, se il puntatore non è bloccato o se è Game Over
     if (!player || !controls.isLocked || isGameOver) { 
         prevTime = time;
-        renderer.render(scene, camera);
+        composer.render();
         return; 
     }
 
@@ -601,7 +805,7 @@ function animate() {
     }
 
     // --- Render Scene ---
-    renderer.render(scene, camera);
+    composer.render();
     
     prevTime = time;
 }
@@ -1356,4 +1560,23 @@ function linkLegacyAndNewModules() {
         spaceCombat.setPlayerStats(player.attackPower, player.maxHealth);
         groundCombat.setPlayerStats(player.attackPower, player.maxHealth);
     }
+}
+
+// --- Initialize Renderer Effects ---
+function initializeRendererEffects() {
+    // Implementa un effetto bloom per far brillare stelle e oggetti luminosi
+    const renderScene = new RenderPass(scene, camera);
+    
+    const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5,   // strength
+        0.4,   // radius
+        0.85   // threshold
+    );
+    
+    const composer = new EffectComposer(renderer);
+    composer.addPass(renderScene);
+    composer.addPass(bloomPass);
+    
+    return composer;
 } 
