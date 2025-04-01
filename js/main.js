@@ -366,11 +366,9 @@ function createUniverseVisuals(systems, planets) {
         flare.position.copy(position);
         flare.lookAt(camera.position);
         
-        // Aggiungi evento per far guardare il flare sempre verso la camera
-        flare.updateMatrix = function() {
-            this.lookAt(camera.position);
-            THREE.Object3D.prototype.updateMatrix.call(this);
-        };
+        // RIMUOVO la sovrascrittura di updateMatrix che causa ricorsione infinita
+        // Invece, segniamo il flare per aggiornamento manuale in ogni frame
+        flare.userData.isFlare = true;
         
         scene.add(flare);
         return flare;
@@ -857,6 +855,9 @@ function animate() {
 
     // --- Update Projectiles ---
     updateProjectiles(delta);
+    
+    // --- Update Star Flares --- (NUOVO)
+    updateStarFlares();
 
     // --- Update Target Indicator ---
     updateTargetIndicator();
@@ -1648,4 +1649,14 @@ function initializeRendererEffects() {
     composer.addPass(bloomPass);
     
     return composer;
+}
+
+// Funzione per aggiornare gli effetti flare delle stelle
+function updateStarFlares() {
+    // Trova tutti gli oggetti marcati come flare e fa in modo che guardino verso la camera
+    scene.traverse(object => {
+        if (object.userData && object.userData.isFlare) {
+            object.lookAt(camera.position);
+        }
+    });
 } 
