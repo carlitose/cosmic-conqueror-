@@ -1,17 +1,18 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
+import { initializeSetup } from './setup.js';
 import { WorldManager } from './worldManager.js';
-import { createPerformanceMonitor } from './performanceMonitor.js';
+import { performanceMonitor } from './performanceMonitor.js';
 import { Player } from './player.js';
 import { UIManager } from './uiManager.js';
+import { AudioManager } from './audioManager.js';
+import { PlayerControls } from './playerControls.js';
 import { SolarSystem } from './space/SolarSystem.js';
-import { TerrainGenerator } from './terrain/TerrainGenerator.js';
+import { TerrainGenerator } from './planet/TerrainGenerator.js';
 import { SpaceCombat } from './combat/SpaceCombat.js';
 import { GroundCombat } from './combat/GroundCombat.js';
-import { enableLowQualityMode, cleanupUnusedResources } from './utils/performance.js';
+import { UniverseGenerator } from './universe.js';
+import { CONSTANTS } from './constants.js';
 
 /**
  * Integrazione centrale del gioco
@@ -28,7 +29,7 @@ export class GameIntegration {
             ...options
         };
         
-        // Riferimenti THREE.js
+        // Riferimenti THREE.js (verranno impostati da setup.js)
         this.container = null;
         this.scene = null;
         this.camera = null;
@@ -53,14 +54,18 @@ export class GameIntegration {
         this.worldManager = null;
         this.player = null;
         this.uiManager = null;
+        this.audioManager = null;
+        this.playerControls = null;
         this.solarSystem = null;
         this.terrainGenerator = null;
         this.spaceCombat = null;
         this.groundCombat = null;
         
-        // Performance
-        this.performanceMonitor = createPerformanceMonitor();
+        // Animation frame ID per la cancellazione
         this.animationFrameId = null;
+        
+        // Moduli attivi (per update)
+        this.activeModules = [];
         
         console.log("GameIntegration creato con opzioni:", this.options);
     }
@@ -73,193 +78,129 @@ export class GameIntegration {
     async initialize(container) {
         this.container = container;
         
-        // Crea gli elementi THREE.js base
-        this.initializeTHREE();
-        
-        // Inizializza i moduli principali
-        this.worldManager = new WorldManager(this.scene);
-        this.player = new Player();
-        this.uiManager = new UIManager(this.container);
-        
-        this.solarSystem = new SolarSystem(this.scene);
-        this.terrainGenerator = new TerrainGenerator(this.scene);
-        this.spaceCombat = new SpaceCombat(this.scene);
-        this.groundCombat = new GroundCombat(this.scene);
-        
-        // Genera l'universo
-        this.state.systems = await this.generateSystems();
-        this.state.planets = await this.generatePlanets(this.state.systems);
-        
-        // Configura la modalità iniziale
-        this.setGameMode(this.state.mode);
-        
-        // Imposta event listener
-        window.addEventListener('resize', this.onWindowResize.bind(this));
-        
-        // Inizia il ciclo di gioco
-        this.animate();
-        
-        console.log("Inizializzazione completata");
-        return Promise.resolve();
-    }
-    
-    /**
-     * Inizializza THREE.js (scene, camera, renderer, postprocessing)
-     */
-    initializeTHREE() {
-        // Scene
-        this.scene = new THREE.Scene();
-        this.scene.fog = new THREE.FogExp2(0x000000, 0.00025);
-        
-        // Camera
-        this.camera = new THREE.PerspectiveCamera(
-            75, window.innerWidth / window.innerHeight, 0.1, 10000
-        );
-        this.camera.position.set(0, 10, 50);
-        
-        // Renderer
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(window.devicePixelRatio);
-        this.renderer.shadowMap.enabled = true;
-        this.container.appendChild(this.renderer.domElement);
-        
-        // Clock
-        this.clock = new THREE.Clock();
-        
-        // Luci base
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
-        this.scene.add(ambientLight);
-        
-        // Effetti post-processing
-        this.setupPostProcessing();
-    }
-    
-    /**
-     * Configura effetti post-processing
-     */
-    setupPostProcessing() {
-        this.composer = new EffectComposer(this.renderer);
-        
-        const renderPass = new RenderPass(this.scene, this.camera);
-        this.composer.addPass(renderPass);
-        
-        // Aggiungi bloom pass per effetto bagliore
-        const bloomPass = new UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            1.5, 0.4, 0.85
-        );
-        this.composer.addPass(bloomPass);
-        
-        // Ottimizza in base alla qualità
-        if (this.options.quality === 'low') {
-            enableLowQualityMode(this.scene, this.camera, this.composer, THREE);
-            this.performanceMonitor.enableLowQuality();
-        }
-    }
-    
-    /**
-     * Genera i sistemi stellari
-     * @returns {Array} Array di sistemi stellari
-     */
-    async generateSystems() {
-        // Placeholder: In una versione completa questo potrebbe caricare da un file
-        // o generare proceduralmente
-        const systems = [];
-        
-        // Crea alcuni sistemi di esempio
-        for (let i = 0; i < 5; i++) {
-            const position = new THREE.Vector3(
-                (Math.random() - 0.5) * 2000,
-                (Math.random() - 0.5) * 200,
-                (Math.random() - 0.5) * 2000
+        try {
+            // Inizializza THREE.js tramite setup.js
+            const setupResult = initializeSetup(container, {
+                quality: this.options.quality,
+                debug: this.options.debug
+            });
+            
+            // Assegna i risultati alle proprietà
+            this.scene = setupResult.scene;
+            this.camera = setupResult.camera;
+            this.renderer = setupResult.renderer;
+            this.clock = setupResult.clock;
+            this.composer = setupResult.composer;
+            
+            // Inizializza il performance monitor
+            performanceMonitor.initialize({
+                targetFPS: this.options.targetFPS,
+                scene: this.scene,
+                camera: this.camera,
+                renderer: this.renderer,
+                composer: this.composer
+            });
+            
+            // Inizializza l'audio manager
+            this.audioManager = new AudioManager();
+            await this.audioManager.initialize();
+            
+            // Inizializza il player
+            this.player = new Player();
+            this.player.createMesh();
+            this.scene.add(this.player.mesh);
+            
+            // Inizializza i controlli del giocatore
+            this.playerControls = new PlayerControls(this.camera, this.player, this.container);
+            this.playerControls.initialize();
+            this.playerControls.setAttackCallback(this.handlePlayerAttack.bind(this));
+            
+            // Inizializza l'UI manager
+            this.uiManager = new UIManager(this.container);
+            this.uiManager.initialize(this.player);
+            this.uiManager.setCallbacks({
+                startGame: this.startGame.bind(this),
+                restartGame: this.restartGame.bind(this),
+                conquerPlanet: this.conquerPlanet.bind(this),
+                upgradePlayer: this.upgradePlayer.bind(this)
+            });
+            
+            // Inizializza world manager
+            this.worldManager = new WorldManager(this.scene);
+            
+            // Inizializza i moduli di gioco
+            this.solarSystem = new SolarSystem(this.scene);
+            this.terrainGenerator = new TerrainGenerator(this.scene);
+            this.spaceCombat = new SpaceCombat(this.scene, this.camera, this.player);
+            this.groundCombat = new GroundCombat(this.scene, this.camera, this.player);
+            
+            // Genera l'universo usando UniverseGenerator
+            console.log("Generando l'universo...");
+            const universeGenerator = new UniverseGenerator();
+            const universeData = universeGenerator.generateUniverse(
+                CONSTANTS.UNIVERSE.SYSTEM_COUNT, 
+                CONSTANTS.UNIVERSE.PLANETS_PER_SYSTEM
             );
             
-            systems.push({
-                id: `system_${i}`,
-                name: `Sistema ${i + 1}`,
-                position: position,
-                starColor: new THREE.Color(0.5 + Math.random() * 0.5, 0.5 + Math.random() * 0.5, 0.5 + Math.random() * 0.5),
-                starSize: 10 + Math.random() * 20,
-                planets: [] // Verrà popolato più tardi
-            });
-        }
-        
-        return systems;
-    }
-    
-    /**
-     * Genera i pianeti per i sistemi stellari
-     * @param {Array} systems - Array di sistemi stellari
-     * @returns {Array} Array di pianeti
-     */
-    async generatePlanets(systems) {
-        const planets = [];
-        
-        systems.forEach(system => {
-            const numPlanets = 2 + Math.floor(Math.random() * 6); // 2-7 pianeti per sistema
+            // Salva i dati dell'universo nello state
+            this.state.systems = universeData.systems;
+            this.state.planets = universeData.planets;
             
-            for (let i = 0; i < numPlanets; i++) {
-                const orbitRadius = 50 + i * 30 + Math.random() * 20;
-                const angle = Math.random() * Math.PI * 2;
-                const x = system.position.x + Math.cos(angle) * orbitRadius;
-                const z = system.position.z + Math.sin(angle) * orbitRadius;
-                
-                // Tipi di pianeti
-                const types = ['rocky', 'gas', 'ocean', 'lava', 'forest'];
-                const type = types[Math.floor(Math.random() * types.length)];
-                
-                const planet = {
-                    id: `planet_${planets.length}`,
-                    systemId: system.id,
-                    name: `Pianeta ${planets.length + 1}`,
-                    position: new THREE.Vector3(x, system.position.y, z),
-                    parentStar: system,
-                    type: type,
-                    size: type === 'gas' ? 15 + Math.random() * 15 : 5 + Math.random() * 10,
-                    orbitRadius: orbitRadius,
-                    orbitSpeed: 0.0001 + Math.random() * 0.0005,
-                    rotationSpeed: 0.0005 + Math.random() * 0.001,
-                    orbitAngle: angle,
-                    color: new THREE.Color(Math.random(), Math.random(), Math.random()),
-                    defense: Math.random() * 100
-                };
-                
-                planets.push(planet);
-                system.planets.push(planet);
-            }
-        });
-        
-        return planets;
+            // Crea le visuali dell'universo
+            this.worldManager.createUniverseVisuals(this.state.systems, this.state.planets);
+            
+            // Imposta la modalità iniziale
+            this.setGameMode(this.state.mode);
+            
+            // Imposta event listener per il ridimensionamento della finestra
+            window.addEventListener('resize', this.onWindowResize.bind(this));
+            
+            // Inizia il ciclo di gioco
+            this.startGameLoop();
+            
+            console.log("Inizializzazione completata");
+            return Promise.resolve();
+        } catch (error) {
+            console.error("Errore durante l'inizializzazione:", error);
+            return Promise.reject(error);
+        }
     }
     
     /**
-     * Ciclo principale di animazione
+     * Avvia il ciclo di gioco
+     */
+    startGameLoop() {
+        // Reset del clock per evitare salti al primo frame
+        this.clock.start();
+        
+        // Avvia l'animazione
+        this.animate();
+    }
+    
+    /**
+     * Ciclo principale di animazione (ex gameLoop.js)
      */
     animate() {
         this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
         
-        // --- Performance Start ---
-        this.performanceMonitor.update();
-        
-        // Log periodico delle performance
-        if (this.performanceMonitor.frameCount % 100 === 0) {
-            this.performanceMonitor.logPerformance();
-        }
+        // Aggiorna il performance monitor
+        performanceMonitor.update();
         
         // Applica limiter FPS
-        if (!this.performanceMonitor.shouldRenderFrame()) {
+        if (!performanceMonitor.shouldRenderFrame()) {
             return; // Salta il frame
         }
         
-        // --- Performance End ---
+        // Calcola delta time
         const deltaTime = this.clock.getDelta();
         this.state.gameTime += deltaTime;
         
+        // Aggiorna solo se il gioco è attivo
         if (!this.state.isPaused && !this.state.isGameOver) {
             this.update(deltaTime);
         }
         
+        // Rendering
         this.render();
     }
     
@@ -268,28 +209,24 @@ export class GameIntegration {
      * @param {number} deltaTime - Delta time
      */
     update(deltaTime) {
-        // --- Gestione qualità dinamica ---
-        if (!this.performanceMonitor.lowQualityMode && this.performanceMonitor.shouldSwitchToLowQuality()) {
-            console.warn("Switching to LOW quality mode");
-            enableLowQualityMode(this.scene, this.camera, this.composer, THREE);
-            this.worldManager.setLODQuality('low');
-            this.performanceMonitor.enableLowQuality();
+        // Ottimizzazione dinamica della qualità
+        performanceMonitor.checkQualityMode();
+        
+        // Esegui pulizia periodica delle risorse
+        if (performanceMonitor.frameCount % 300 === 0) {
+            performanceMonitor.cleanupUnusedResources();
         }
         
-        // --- Cleanup periodico ---
-        if (this.performanceMonitor.frameCount % 300 === 0) {
-            cleanupUnusedResources(THREE);
-        }
-        
-        // Aggiorna il player
+        // Aggiorna il player e i controlli
+        this.playerControls.update(deltaTime);
         this.player.update(deltaTime);
         
-        // Aggiorna il WorldManager con la posizione del giocatore
+        // Aggiorna WorldManager con la posizione del giocatore
         const playerPosition = this.state.mode === 'space' ? 
             this.camera.position : this.player.position;
         this.worldManager.update(deltaTime, playerPosition);
         
-        // Aggiorna in base alla modalità corrente
+        // Aggiorna i moduli in base alla modalità corrente
         switch (this.state.mode) {
             case 'space':
                 this.updateSpaceMode(deltaTime);
@@ -302,8 +239,11 @@ export class GameIntegration {
                 break;
         }
         
+        // Aggiorna moduli attivi
+        this.updateActiveModules(deltaTime);
+        
         // Aggiorna l'UI con lo stato corrente
-        this.uiManager.update(this.state);
+        this.uiManager.update(this.state, this.player);
         
         // Gestisci collisioni e altri eventi
         this.checkCollisions();
@@ -311,11 +251,47 @@ export class GameIntegration {
     }
     
     /**
+     * Aggiorna i moduli attivi
+     * @param {number} deltaTime - Delta time
+     */
+    updateActiveModules(deltaTime) {
+        for (const module of this.activeModules) {
+            if (module && typeof module.update === 'function') {
+                module.update(deltaTime);
+            }
+        }
+    }
+    
+    /**
+     * Aggiunge un modulo agli aggiornamenti attivi
+     * @param {Object} module - Modulo da aggiungere
+     * @param {string} name - Nome del modulo (opzionale)
+     */
+    addModule(module, name = '') {
+        if (module && typeof module.update === 'function') {
+            module.isActive = true;
+            if (name) module.moduleName = name;
+            this.activeModules.push(module);
+        }
+    }
+    
+    /**
+     * Rimuove un modulo dagli aggiornamenti attivi
+     * @param {Object} module - Modulo da rimuovere
+     */
+    removeModule(module) {
+        const index = this.activeModules.indexOf(module);
+        if (index !== -1) {
+            this.activeModules.splice(index, 1);
+        }
+    }
+    
+    /**
      * Aggiorna la modalità spaziale
      * @param {number} deltaTime - Delta time
      */
     updateSpaceMode(deltaTime) {
-        // Aggiorna le stelle
+        // Aggiorna il sistema solare
         this.solarSystem.update(deltaTime);
         
         // Verifica se il giocatore è vicino a un pianeta
@@ -365,30 +341,59 @@ export class GameIntegration {
      * Verifica collisioni tra oggetti
      */
     checkCollisions() {
-        // Implementazione da completare in base al sistema di collisione
+        if (this.state.mode === 'space') {
+            // Collisioni nello spazio (pianeti, portali, nemici)
+            // ...
+        } else if (this.state.mode === 'planet') {
+            // Collisioni su un pianeta (terreno, oggetti, nemici)
+            // ...
+        } else if (this.state.mode === 'combat') {
+            // Collisioni in combattimento (proiettili, nemici)
+            // ...
+        }
     }
     
     /**
      * Verifica eventi speciali nel gioco
      */
     checkGameEvents() {
-        // Implementazione da completare per eventi come missioni, obiettivi, ecc.
+        // Implementazione per verificare eventi come missioni, obiettivi, ecc.
     }
     
     /**
      * Verifica se il giocatore è vicino a un pianeta
      */
     checkPlanetProximity() {
-        // Implementazione per rilevare quando il giocatore è vicino a un pianeta
-        // e mostrare l'UI di interazione
+        // Cerca il pianeta più vicino al giocatore
+        const playerPosition = this.camera.position;
+        let nearestPlanet = null;
+        let nearestDistance = Infinity;
+        
+        for (const planet of this.state.planets) {
+            const distance = playerPosition.distanceTo(planet.position);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestPlanet = planet;
+            }
+        }
+        
+        // Se il giocatore è abbastanza vicino, mostra le informazioni del pianeta
+        if (nearestPlanet && nearestDistance < nearestPlanet.size * 3) {
+            if (this.state.activePlanet !== nearestPlanet) {
+                this.state.activePlanet = nearestPlanet;
+                this.uiManager.showPlanetInfo(nearestPlanet);
+            }
+        } else if (this.state.activePlanet) {
+            this.state.activePlanet = null;
+            this.uiManager.hidePlanetInfo();
+        }
     }
     
     /**
      * Verifica se il giocatore è vicino a un portale
      */
     checkPortalProximity() {
-        // Implementazione per rilevare quando il giocatore è vicino a un portale
-        // che permette di tornare nello spazio
+        // Implementazione per verificare la vicinanza a portali
     }
     
     /**
@@ -396,7 +401,7 @@ export class GameIntegration {
      */
     render() {
         // Usa composer se disponibile, altrimenti renderer standard
-        if (this.composer) {
+        if (this.composer && !performanceMonitor.lowQualityMode) {
             this.composer.render();
         } else {
             this.renderer.render(this.scene, this.camera);
@@ -442,8 +447,16 @@ export class GameIntegration {
      * Disattiva i sistemi della modalità corrente
      */
     deactivateCurrentSystems() {
-        // Implementazione della logica per disattivare i sistemi non necessari
-        // quando si cambia modalità di gioco
+        // Svuota la lista di moduli attivi
+        this.activeModules = [];
+        
+        // Disattiva moduli specifici
+        if (this.solarSystem) this.solarSystem.active = false;
+        if (this.terrainGenerator) this.terrainGenerator.active = false;
+        if (this.spaceCombat) this.spaceCombat.deactivate();
+        if (this.groundCombat) this.groundCombat.deactivate();
+        
+        // Pulisci la scena per il cambio di modalità
         this.clearSceneForModeChange();
     }
     
@@ -451,8 +464,34 @@ export class GameIntegration {
      * Pulisce la scena per il cambio di modalità
      */
     clearSceneForModeChange() {
-        // Rimuovi oggetti specifici della modalità precedente, preservando
-        // quelli comuni (luci, player, UI 3D)
+        // Preserva gli oggetti essenziali della scena (luci, player, UI 3D)
+        const preserveObjects = [this.player.mesh];
+        
+        // Rimuovi gli oggetti non essenziali dalla scena
+        const objectsToRemove = [];
+        this.scene.traverse(object => {
+            // Salta gli oggetti da preservare
+            if (preserveObjects.includes(object)) return;
+            
+            // Salta le luci
+            if (object instanceof THREE.Light) return;
+            
+            // Salta la camera e gli oggetti collegati
+            if (object === this.camera || object.parent === this.camera) return;
+            
+            // Salta oggetti marcati come permanenti
+            if (object.userData && object.userData.isPermanent) return;
+            
+            // Aggiungi alla lista di oggetti da rimuovere
+            if (object.parent === this.scene) {
+                objectsToRemove.push(object);
+            }
+        });
+        
+        // Rimuovi gli oggetti
+        for (const object of objectsToRemove) {
+            this.scene.remove(object);
+        }
     }
     
     /**
@@ -461,6 +500,12 @@ export class GameIntegration {
     setupSpaceMode() {
         // Crea visuali dell'universo
         this.worldManager.createUniverseVisuals(this.state.systems, this.state.planets);
+        
+        // Attiva il sistema solare
+        this.solarSystem.active = true;
+        
+        // Aggiungi il modulo alla lista degli attivi
+        this.addModule(this.solarSystem, 'solarSystem');
         
         // Configura controlli per lo spazio
         this.setupSpaceControls();
@@ -493,6 +538,10 @@ export class GameIntegration {
         
         // Genera terreno per il pianeta
         this.terrainGenerator.generateTerrain(planet);
+        this.terrainGenerator.active = true;
+        
+        // Aggiungi il modulo alla lista degli attivi
+        this.addModule(this.terrainGenerator, 'terrainGenerator');
         
         // Configura controlli per il pianeta
         this.setupPlanetControls();
@@ -511,8 +560,10 @@ export class GameIntegration {
         // Configura il combattimento in base alla modalità precedente
         if (this.state.lastMode === 'space') {
             this.spaceCombat.startCombat(enemies || this.generateSpaceEnemies());
+            this.addModule(this.spaceCombat, 'spaceCombat');
         } else {
             this.groundCombat.startCombat(enemies || this.generateGroundEnemies());
+            this.addModule(this.groundCombat, 'groundCombat');
         }
         
         // Configura controlli per il combattimento
@@ -523,21 +574,61 @@ export class GameIntegration {
      * Configura controlli per lo spazio
      */
     setupSpaceControls() {
-        // Implementazione controlli per modalità spaziale
+        this.playerControls.setMode('space');
+        
+        // Imposta il player in modalità volo
+        this.player.setFlightMode(true);
     }
     
     /**
      * Configura controlli per il pianeta
      */
     setupPlanetControls() {
-        // Implementazione controlli per modalità planetaria
+        this.playerControls.setMode('planet');
+        
+        // Imposta il player in modalità terrestre
+        this.player.setFlightMode(false);
     }
     
     /**
      * Configura controlli per il combattimento
      */
     setupCombatControls() {
-        // Implementazione controlli per modalità combattimento
+        // In base al tipo di combattimento
+        if (this.state.lastMode === 'space') {
+            this.playerControls.setMode('spaceCombat');
+            this.player.setFlightMode(true);
+        } else {
+            this.playerControls.setMode('groundCombat');
+            this.player.setFlightMode(false);
+        }
+    }
+    
+    /**
+     * Gestisce l'attacco del giocatore (callback dai controlli)
+     * @param {string} attackType - Tipo di attacco
+     * @param {THREE.Vector3} direction - Direzione dell'attacco
+     */
+    handlePlayerAttack(attackType, direction) {
+        const attackData = this.player.attack(attackType, direction);
+        
+        if (attackData) {
+            // In base alla modalità, passa l'attacco al gestore appropriato
+            if (this.state.mode === 'combat') {
+                if (this.state.lastMode === 'space') {
+                    this.spaceCombat.createProjectile(attackData);
+                } else {
+                    this.groundCombat.createProjectile(attackData);
+                }
+            } else {
+                // Attacco in spazio o pianeta
+                // Per ora non facciamo nulla qui, ma potremmo implementare proiettili
+                // anche in queste modalità se necessario
+            }
+            
+            // Riproduci il suono dell'attacco
+            this.audioManager.playSound('shoot', 0.5);
+        }
     }
     
     /**
@@ -546,7 +637,8 @@ export class GameIntegration {
      */
     shouldEnterSpaceCombat() {
         // Logica per decidere quando entrare in combattimento spaziale
-        return false; // Placeholder
+        // Per ora, ritorna false (placeholder)
+        return false;
     }
     
     /**
@@ -555,7 +647,8 @@ export class GameIntegration {
      */
     shouldEnterGroundCombat() {
         // Logica per decidere quando entrare in combattimento a terra
-        return false; // Placeholder
+        // Per ora, ritorna false (placeholder)
+        return false;
     }
     
     /**
@@ -590,6 +683,104 @@ export class GameIntegration {
     }
     
     /**
+     * Avvia il gioco
+     * @param {string} playerRace - Razza del giocatore
+     */
+    startGame(playerRace) {
+        console.log(`Iniziando il gioco con razza: ${playerRace}`);
+        
+        // Imposta la razza del giocatore
+        this.player.setRace(playerRace);
+        
+        // Metti il giocatore nella posizione iniziale
+        this.player.position.set(0, 10, 0);
+        this.camera.position.copy(this.player.position);
+        
+        // Avvia il gioco
+        this.playerControls.lock();
+        this.uiManager.hideTitleScreen();
+    }
+    
+    /**
+     * Riavvia il gioco dopo un game over
+     */
+    restartGame() {
+        // Reimposta lo stato del gioco
+        this.state.isGameOver = false;
+        
+        // Reimposta il player
+        this.player.reset();
+        
+        // Riavvia il gioco
+        this.setGameMode('space');
+        this.uiManager.hideGameOverScreen();
+        this.playerControls.lock();
+    }
+    
+    /**
+     * Tenta la conquista di un pianeta
+     * @param {Object} planet - Pianeta da conquistare
+     */
+    conquerPlanet(planet = null) {
+        const targetPlanet = planet || this.state.activePlanet;
+        
+        if (!targetPlanet) {
+            console.error("Tentativo di conquista senza un pianeta selezionato");
+            return;
+        }
+        
+        // Tenta la conquista
+        const result = {
+            success: this.player.attackPower > targetPlanet.defense,
+            resources: Math.floor(targetPlanet.size * 10 + Math.random() * 20),
+            message: ""
+        };
+        
+        if (result.success) {
+            // Conquista riuscita
+            targetPlanet.isConquered = true;
+            targetPlanet.conqueredBy = this.player.race;
+            targetPlanet.defense = 0;
+            
+            // Aggiorna risorse del giocatore
+            this.player.currency += result.resources;
+            
+            // Mostra messaggio
+            result.message = `Hai conquistato ${targetPlanet.name} e ottenuto ${result.resources} risorse!`;
+            this.uiManager.showMessage(result.message);
+            
+            // Aggiorna visuali del pianeta
+            this.worldManager.updatePlanetVisuals(targetPlanet);
+        } else {
+            // Conquista fallita, avvia combattimento
+            result.message = `Difese di ${targetPlanet.name} troppo forti. Inizia il combattimento!`;
+            this.uiManager.showMessage(result.message);
+            
+            // Avvia il combattimento
+            this.setGameMode('combat');
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Potenzia una statistica del giocatore
+     * @param {string} stat - Statistica da potenziare
+     */
+    upgradePlayer(stat) {
+        const result = this.player.upgrade(stat);
+        
+        if (result.success) {
+            this.uiManager.showMessage(result.message);
+            this.uiManager.updatePlayerStats(this.player);
+        } else {
+            this.uiManager.showMessage(result.message, 'error');
+        }
+        
+        return result;
+    }
+    
+    /**
      * Handler per il ridimensionamento della finestra
      */
     onWindowResize() {
@@ -598,15 +789,6 @@ export class GameIntegration {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         if (this.composer) {
             this.composer.setSize(window.innerWidth, window.innerHeight);
-        }
-    }
-    
-    /**
-     * Aggiunge metodi per il WorldManager
-     */
-    setLODQuality(quality) {
-        if (this.worldManager) {
-            this.worldManager.setLODQuality(quality);
         }
     }
     
@@ -621,6 +803,11 @@ export class GameIntegration {
         
         // Rimuovi event listener
         window.removeEventListener('resize', this.onWindowResize);
+        
+        // Disattiva i controlli
+        if (this.playerControls) {
+            this.playerControls.dispose();
+        }
         
         // Pulisci THREE.js
         this.scene.traverse(object => {
@@ -637,10 +824,14 @@ export class GameIntegration {
             }
         });
         
-        this.renderer.dispose();
+        if (this.renderer) {
+            this.renderer.dispose();
+        }
         
         // Pulisci moduli
-        // ...
+        if (this.audioManager) {
+            this.audioManager.dispose();
+        }
         
         console.log("Risorse del gioco liberate");
     }
