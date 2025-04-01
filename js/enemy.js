@@ -78,7 +78,7 @@ export class Enemy {
             this.targetPlayer = player;
             // Droni: Inseguono brevemente o si fermano per attaccare?
             // Per ora, si fermano e attaccano.
-            return this.aimAndAttack(deltaTime); // Ritorna i dati del proiettile se spara
+            return this.aimAndAttack(); // Ritorna i dati del proiettile se spara
         } else {
             this.targetPlayer = null;
             
@@ -93,9 +93,8 @@ export class Enemy {
 
     /**
      * Mira al giocatore e attacca se possibile
-     * @param {number} deltaTime - Tempo trascorso dall'ultimo frame
      */
-    aimAndAttack(deltaTime) {
+    aimAndAttack() {
         if (!this.targetPlayer || !this.mesh) return null;
         
         const currentTime = performance.now() / 1000;
@@ -202,5 +201,12 @@ export class Enemy {
             (Math.random() - 0.5) * 2 * this.patrolRadius
         );
         return new THREE.Vector3().copy(this.spawnPoint).add(randomOffset);
+    }
+
+    /**
+     * Muove il nemico verso il giocatore
+     */
+    moveTowardsPlayer() {
+        // Implementazione movimento
     }
 } 

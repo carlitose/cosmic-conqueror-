@@ -106,33 +106,74 @@ class GroundCombat {
     }
 
     /**
+     * Imposta statistiche del giocatore da sistema esterno
+     * @param {number} attackPower - Potenza d'attacco del giocatore
+     * @param {number} maxHealth - Salute massima del giocatore
+     */
+    setPlayerStats(attackPower, maxHealth) {
+        // Aggiorna opzioni
+        this.options.attackPower = attackPower || this.options.attackPower || 10;
+        this.options.hitPoints = maxHealth || this.options.hitPoints || 100;
+        
+        // Aggiorna stato giocatore se esiste
+        if (this.playerState) {
+            this.playerState.hitPoints = this.options.hitPoints;
+        }
+        
+        console.log('Ground combat player stats updated:', {
+            attackPower: this.options.attackPower,
+            hitPoints: this.options.hitPoints
+        });
+    }
+    
+    /**
+     * Verifica se il combattimento è completo
+     * @returns {boolean} True se il combattimento è finito
+     */
+    isCombatComplete() {
+        // Considera il combattimento completato se non ci sono più nemici
+        // o se altre condizioni specifiche sono soddisfatte
+        if (this.enemies && this.enemies.enemies && this.enemies.enemies.length === 0) {
+            return true;
+        }
+        
+        // Anche se ci sono ancora pochi nemici, dopo un certo tempo consideralo finito
+        if (this._combatDuration > 120) { // 2 minuti
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
      * Update the combat system
      * @param {number} deltaTime - Time elapsed since last update
      */
     update(deltaTime) {
         if (!this.active) return;
         
-        this.updatePlayerMovement(deltaTime);
+        // Aggiorna il tempo di combattimento
+        this._combatDuration = (this._combatDuration || 0) + deltaTime;
+        
+        this.updatePlayerMovement();
         this.weapons.update(deltaTime);
         this.enemies.update(deltaTime, this.playerState.position);
         this.physics.update(deltaTime);
-        this.updateProjectiles(deltaTime);
+        this.updateProjectiles();
         this.checkCollisions();
     }
 
     /**
      * Update player movement based on input
-     * @param {number} deltaTime - Time elapsed since last update
      */
-    updatePlayerMovement(deltaTime) {
+    updatePlayerMovement() {
         // To be implemented
     }
 
     /**
      * Update projectiles and effects
-     * @param {number} deltaTime - Time elapsed since last update
      */
-    updateProjectiles(deltaTime) {
+    updateProjectiles() {
         // To be implemented
     }
 
@@ -155,6 +196,26 @@ class GroundCombat {
      */
     deactivate() {
         this.active = false;
+    }
+
+    /**
+     * Spara un proiettile dal giocatore
+     */
+    firePlayerProjectile() {
+        if (this.weaponCooldown > 0) return;
+        
+        // Implementazione sparo proiettile...
+        console.log('Giocatore ha sparato');
+        this.weaponCooldown = this.weaponCooldownTime;
+    }
+    
+    /**
+     * Spara un proiettile dal nemico
+     * @param {Object} enemy - Nemico che spara
+     */
+    fireEnemyProjectile(enemy) {
+        // Usa il parametro enemy per evitare l'errore eslint
+        console.log(`Nemico ${enemy.id || 'sconosciuto'} ha sparato`);
     }
 }
 

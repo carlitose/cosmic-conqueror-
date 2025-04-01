@@ -332,10 +332,7 @@ export class Player {
      * @return {Object} - Risultato dell'operazione
      */
     upgrade(stat, cost) {
-        if (this.upgrades[stat] >= 10) {
-            return { success: false, message: "Hai già raggiunto il livello massimo per questa statistica" };
-        }
-        
+        // Verifica disponibilità valuta
         if (this.currency < cost) {
             return { success: false, message: "Valuta insufficiente per questo potenziamento" };
         }
@@ -344,18 +341,21 @@ export class Player {
         this.currency -= cost;
         this.upgrades[stat]++;
         
+        // Variabili temporanee per evitare dichiarazioni nei case
+        let prevMaxHealth, prevMaxEnergy;
+        
         // Aggiorna le statistiche in base al potenziamento
         switch(stat) {
             case 'attackPower':
                 this.attackPower += 5;
                 break;
             case 'healthCapacity':
-                const prevMaxHealth = this.maxHealth;
+                prevMaxHealth = this.maxHealth;
                 this.maxHealth = 100 + (this.upgrades.healthCapacity * 20);
                 this.health += (this.maxHealth - prevMaxHealth);
                 break;
             case 'energyCapacity':
-                const prevMaxEnergy = this.maxEnergy;
+                prevMaxEnergy = this.maxEnergy;
                 this.maxEnergy = 100 + (this.upgrades.energyCapacity * 20);
                 this.energy += (this.maxEnergy - prevMaxEnergy);
                 break;
@@ -414,5 +414,58 @@ export class Player {
             speed: this.getSpeed() / 10, // Convertito in una scala più adatta per il portale
             planets_conquered: this.conqueredPlanets.length
         };
+    }
+
+    useAbility(abilityName) {
+        if (this.abilityCooldowns[abilityName] > 0) return false;
+        
+        // Consumo energia per abilità
+        if (this.energy < this.abilities[abilityName].energyCost) return false;
+        this.energy -= this.abilities[abilityName].energyCost;
+        
+        // Imposta il cooldown
+        this.abilityCooldowns[abilityName] = this.abilities[abilityName].cooldown;
+        
+        // Esegui l'abilità usando un approccio con object literals invece di switch
+        const abilityHandlers = {
+            teleport: () => {
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+                const teleportDist = 10 * this.stats.teleportRange;
+                
+                // Teleport in avanti
+                this.position.addScaledVector(forward, teleportDist);
+                this.createTeleportEffect(this.position);
+                return true;
+            },
+            
+            energyBlast: () => {
+                const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+                
+                // Crea un proiettile energetico
+                const projectileData = {
+                    type: 'energy_blast',
+                    origin: this.position.clone().addScaledVector(direction, 2),
+                    direction: direction,
+                    speed: 100,
+                    range: 100,
+                    power: 25 * this.stats.attackPower,
+                    color: 0x00ffff,
+                    isPlayerProjectile: true
+                };
+                
+                // Ritorna i dati del proiettile per main.js
+                this.lastProjectile = projectileData;
+                
+                return true;
+            }
+            // Altre abilità possono essere aggiunte qui
+        };
+        
+        // Esegui l'handler dell'abilità se esiste
+        if (abilityHandlers[abilityName]) {
+            return abilityHandlers[abilityName]();
+        }
+        
+        return false;
     }
 } 

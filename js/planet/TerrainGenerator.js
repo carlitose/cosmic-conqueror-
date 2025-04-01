@@ -83,7 +83,7 @@ export class TerrainGenerator {
         geometry.translate(x, 0, z);
         
         // Generiamo le altezze per questo chunk
-        this.generateHeightmap(geometry, x, z);
+        this.generateHeightmap(geometry);
         
         // Calcoliamo le normali per un buon lighting
         geometry.computeVertexNormals();
@@ -114,8 +114,9 @@ export class TerrainGenerator {
     
     /**
      * Genera una heightmap per un chunk di terreno
+     * @param {THREE.BufferGeometry} geometry - La geometria del chunk
      */
-    generateHeightmap(geometry, chunkX, chunkZ) {
+    generateHeightmap(geometry) {
         const positions = geometry.attributes.position.array;
         
         // Implementazione semplificata, senza GPGPU per ora
@@ -319,5 +320,18 @@ export class TerrainGenerator {
         
         // Se non troviamo un chunk a questa posizione, restituiamo un'altezza base
         return 0;
+    }
+    
+    /**
+     * Applica una texture basata sul pianeta al chunk del terreno
+     * @param {THREE.Mesh} chunk - Chunk del terreno
+     */
+    applyPlanetTexture(chunk) {
+        // Implementazione per applicare la texture del pianeta al chunk
+        if (this.planetTextureMap[this.planetType]) {
+            const texture = this.planetTextureMap[this.planetType];
+            chunk.material.map = texture;
+            chunk.material.needsUpdate = true;
+        }
     }
 } 

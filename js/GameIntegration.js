@@ -379,13 +379,23 @@ class GameIntegration {
      * Create a portal to another location
      * @param {string} targetMode - Target game mode
      * @param {THREE.Vector3} targetPosition - Target position
-     * @param {Object} parameters - Additional portal parameters
+     * @param {Object} params - Additional portal parameters
      */
-    createPortal(targetMode, targetPosition, parameters = {}) {
+    createPortal(targetMode, targetPosition, params = {}) {
         // Vibe Jam portal implementation
         console.log(`Creating portal to ${targetMode} at position ${targetPosition.x}, ${targetPosition.y}, ${targetPosition.z}`);
+        console.log('Portal parameters:', params);
         
         // Portal implementation would go here
+    }
+    
+    /**
+     * Processa i parametri ricevuti da un portale
+     * @param {Object} params Parametri dal portale
+     */
+    processPortalParameters(params) {
+        console.log('GameIntegration: Ricevuti parametri dal portale:', params);
+        // ... existing code ...
     }
 }
 

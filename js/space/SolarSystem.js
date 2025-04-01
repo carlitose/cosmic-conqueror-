@@ -387,22 +387,50 @@ export class SolarSystem {
     update(deltaTime) {
         // Aggiorna rotazione dei pianeti
         this.planets.forEach(planet => {
-            // Aggiorna rotazione del pianeta
-            planet.rotation.y += planet.userData.rotationSpeed * deltaTime;
-            
-            // Aggiorna posizione orbitale
-            planet.userData.orbitAngle += planet.userData.orbitSpeed * deltaTime;
-            planet.position.x = Math.cos(planet.userData.orbitAngle) * planet.userData.orbitDistance;
-            planet.position.z = Math.sin(planet.userData.orbitAngle) * planet.userData.orbitDistance;
-            
-            // Aggiorna lune
-            planet.userData.moons.forEach(moon => {
-                moon.rotation.y += moon.userData.rotationSpeed * deltaTime;
+            // Controlla se è un pianeta importato (ha mesh) o un pianeta nativo
+            if (planet.mesh) {
+                // Pianeta importato con riferimento a mesh esterna
                 
-                moon.userData.orbitAngle += moon.userData.orbitSpeed * deltaTime;
-                moon.position.x = Math.cos(moon.userData.orbitAngle) * moon.userData.orbitDistance;
-                moon.position.z = Math.sin(moon.userData.orbitAngle) * moon.userData.orbitDistance;
-            });
+                // Aggiorna angolo orbitale
+                planet.orbitAngle = (planet.orbitAngle || 0) + (planet.orbitSpeed || 0.01) * deltaTime;
+                
+                // Aggiorna posizione orbitale se c'è un raggio di orbita
+                if (planet.orbitRadius) {
+                    const newX = Math.cos(planet.orbitAngle) * planet.orbitRadius;
+                    const newZ = Math.sin(planet.orbitAngle) * planet.orbitRadius;
+                    
+                    // Aggiorna posizione dell'oggetto pianeta
+                    if (planet.position) {
+                        planet.position.set(newX, planet.position.y, newZ);
+                    }
+                    
+                    // Aggiorna anche la mesh associata se esiste
+                    if (planet.mesh && planet.mesh.position) {
+                        planet.mesh.position.set(newX, planet.mesh.position.y, newZ);
+                    }
+                }
+            } else if (planet.rotation && planet.userData) {
+                // Pianeta nativo (è una mesh Three.js diretta)
+                
+                // Aggiorna rotazione del pianeta
+                planet.rotation.y += planet.userData.rotationSpeed * deltaTime;
+                
+                // Aggiorna posizione orbitale
+                planet.userData.orbitAngle += planet.userData.orbitSpeed * deltaTime;
+                planet.position.x = Math.cos(planet.userData.orbitAngle) * planet.userData.orbitDistance;
+                planet.position.z = Math.sin(planet.userData.orbitAngle) * planet.userData.orbitDistance;
+                
+                // Aggiorna lune
+                if (planet.userData.moons) {
+                    planet.userData.moons.forEach(moon => {
+                        moon.rotation.y += moon.userData.rotationSpeed * deltaTime;
+                        
+                        moon.userData.orbitAngle += moon.userData.orbitSpeed * deltaTime;
+                        moon.position.x = Math.cos(moon.userData.orbitAngle) * moon.userData.orbitDistance;
+                        moon.position.z = Math.sin(moon.userData.orbitAngle) * moon.userData.orbitDistance;
+                    });
+                }
+            }
         });
     }
 
@@ -439,4 +467,71 @@ export class SolarSystem {
         
         return true;
     }
-} 
+
+    /**
+     * Importa dati dal sistema esistente
+     * @param {Array} systems - Array di sistemi stellari esistenti
+     * @param {Array} planetMeshes - Array di mesh dei pianeti esistenti
+     */
+    importLegacyData(systems, planetMeshes) {
+        if (!systems || !planetMeshes) return;
+        
+        // Reset di qualsiasi dato esistente
+        this.planets = [];
+        this.orbits = [];
+        
+        // Importa le stelle dai sistemi
+        systems.forEach(system => {
+            // Crea una stella dal sistema esistente
+            const star = {
+                position: system.position.clone(),
+                radius: system.starSize * 5, // Usiamo la stessa scala del codice esistente
+                color: system.starColor,
+                luminosity: system.starSize * 2, // Derivato dal size
+                name: system.name || `Star-${this.stars.length}`
+            };
+            
+            this.stars.push(star);
+        });
+        
+        // Importa i pianeti dalle mesh esistenti
+        planetMeshes.forEach(mesh => {
+            if (mesh.userData && mesh.userData.planetData) {
+                const planetData = mesh.userData.planetData;
+                
+                // Crea un pianeta basato sui dati esistenti
+                const planet = {
+                    position: planetData.position.clone(),
+                    radius: planetData.size * 2, // Usiamo la stessa scala del codice esistente
+                    orbitRadius: planetData.orbitRadius || 0,
+                    orbitSpeed: planetData.orbitSpeed || 0.1,
+                    rotationSpeed: 0.01, // Valore di default
+                    color: planetData.color,
+                    name: planetData.name || `Planet-${this.planets.length}`,
+                    texture: null, // Da determinare in base al tipo di pianeta
+                    isConquered: planetData.isConquered || false,
+                    defense: planetData.defense || 0,
+                    resources: planetData.resources || 0,
+                    mesh: mesh
+                };
+                
+                // Aggiungi il pianeta alla collezione
+                this.planets.push(planet);
+                
+                // Se il pianeta è in orbita, crea anche l'orbita
+                if (planetData.parentStar) {
+                    const orbit = {
+                        center: new THREE.Vector3().copy(planetData.parentStar.position),
+                        radius: planetData.orbitRadius || 
+                                planetData.position.distanceTo(planetData.parentStar.position),
+                        planet: planet
+                    };
+                    
+                    this.orbits.push(orbit);
+                }
+            }
+        });
+        
+        console.log(`Imported ${this.stars.length} stars and ${this.planets.length} planets from legacy data`);
+    }
+}

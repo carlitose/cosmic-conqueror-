@@ -257,7 +257,7 @@ export class SpaceCombat {
         this.updateProjectiles(deltaTime);
         
         // Aggiorna esplosioni
-        this.updateExplosions(deltaTime);
+        this.updateExplosions();
         
         // Controlla collisioni
         this.checkCollisions();
@@ -347,7 +347,7 @@ export class SpaceCombat {
     /**
      * Aggiorna le esplosioni
      */
-    updateExplosions(deltaTime) {
+    updateExplosions() {
         const currentTime = performance.now() / 1000;
         
         for (let i = this.explosions.length - 1; i >= 0; i--) {
@@ -435,28 +435,68 @@ export class SpaceCombat {
     }
     
     /**
-     * Genera ondata di nemici
+     * Crea un'onda di nemici basata sulla posizione del giocatore
+     * @param {THREE.Vector3} playerPosition - Posizione del giocatore
      */
-    spawnEnemyWave(playerPosition, difficulty = 1) {
-        const count = 2 + Math.floor(difficulty * 1.5);
-        const types = ['fighter', 'bomber', 'cruiser'];
-        const radius = 100 + (Math.random() * 50);
+    spawnEnemyWave(playerPosition) {
+        const spawnRadius = 300;
+        const enemyCount = Math.floor(Math.random() * 3) + 2; // 2-4 nemici per ondata
         
-        for (let i = 0; i < count; i++) {
-            // Determina il tipo di nemico (più difficoltà = più nemici avanzati)
-            const typeIndex = Math.min(
-                Math.floor(Math.random() * 3),
-                Math.floor(Math.random() * difficulty)
-            );
-            const type = types[typeIndex];
-            
-            // Posizione casuale intorno al giocatore
+        for (let i = 0; i < enemyCount; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const x = playerPosition.x + Math.cos(angle) * radius;
-            const y = playerPosition.y + (Math.random() - 0.5) * 20;
-            const z = playerPosition.z + Math.sin(angle) * radius;
+            const enemyPos = new THREE.Vector3(
+                playerPosition.x + Math.cos(angle) * spawnRadius,
+                playerPosition.y + (Math.random() - 0.5) * 100,
+                playerPosition.z + Math.sin(angle) * spawnRadius
+            );
             
-            this.spawnEnemy(new THREE.Vector3(x, y, z), type);
+            this.spawnEnemy(Math.random() < 0.7 ? 'fighter' : 'bomber', enemyPos);
         }
     }
-} 
+    
+    /**
+     * Imposta statistiche del giocatore da sistema esterno
+     * @param {number} attackPower - Potenza d'attacco del giocatore
+     * @param {number} maxHealth - Salute massima del giocatore
+     */
+    setPlayerStats(attackPower, maxHealth) {
+        if (this.player) {
+            this.player.attackPower = attackPower || this.player.attackPower;
+            this.player.maxHealth = maxHealth || this.player.maxHealth;
+            this.player.health = this.player.maxHealth;
+        } else {
+            // Crea un oggetto player temporaneo se non esiste
+            this.player = {
+                attackPower: attackPower || 10,
+                maxHealth: maxHealth || 100,
+                health: maxHealth || 100,
+                position: new THREE.Vector3()
+            };
+        }
+        
+        console.log('Space combat player stats updated:', this.player);
+    }
+    
+    /**
+     * Verifica se il combattimento è completo
+     * @returns {boolean} True se il combattimento è finito
+     */
+    isCombatComplete() {
+        // Considera il combattimento completato se non ci sono più nemici
+        // o se altre condizioni specifiche sono soddisfatte
+        if (this.enemies && this.enemies.length === 0) {
+            return true;
+        }
+        
+        // Più nemici distrutti rispetto a quelli vivi
+        if (this.enemiesDestroyed && this.enemies) {
+            const ratio = this.enemiesDestroyed / (this.enemies.length || 1);
+            if (ratio > 3) { // Se hai distrutto 3 volte più nemici di quelli ancora presenti
+                return true;
+            }
+        }
+        
+        return false;
+    }
+}
+ 

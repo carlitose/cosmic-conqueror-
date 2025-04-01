@@ -1,9 +1,15 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import * as SimplexNoise from 'simplex-noise';
+// SimplexNoise viene importato altrove
+// import * as SimplexNoise from 'simplex-noise';
 import { UniverseGenerator } from './universe.js';
 import { Player } from './player.js';
 import { Enemy } from './enemy.js';
+import { SolarSystem } from './space/SolarSystem.js';
+import { TerrainGenerator } from './planet/TerrainGenerator.js';
+import { SpaceCombat } from './combat/SpaceCombat.js';
+import { GroundCombat } from './combat/GroundCombat.js';
+import { GameIntegration } from './GameIntegration.js';
 
 // --- Global Variables ---
 let scene, camera, renderer, controls;
@@ -18,12 +24,20 @@ let activeEnemies = []; // Array per i nemici attivi
 let targetIndicatorArrow = null; // <-- Nuovo: Freccia indicatore
 
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, moveUp = false, moveDown = false;
-let canJump = false;
 let prevTime = performance.now();
 
 let activeProjectiles = []; // Array per gli attacchi attivi
 
 let currentTargetPlanet = null; // Pianeta attualmente nel raggio d'azione
+
+// NUOVI MODULI INTEGRATI
+let solarSystem = null;
+let terrainGenerator = null;
+let spaceCombat = null;
+let groundCombat = null;
+// gameIntegration è necessario per la gestione centralizzata dei moduli di gioco
+let gameIntegration = null;
+let gameMode = 'space'; // 'space', 'planet', 'space-combat', 'ground-combat'
 
 // UI Elements
 const characterSelectionScreen = document.getElementById('character-selection');
@@ -46,7 +60,6 @@ const legendScreen = document.getElementById('legend-screen'); // <-- Nuovo: Leg
 const closeLegendButton = document.getElementById('close-legend'); // <-- Nuovo: Pulsante chiudi legenda
 
 let isGameOver = false; // Flag per stato Game Over
-let isLegendOpen = false; // <-- Nuovo: Stato legenda
 
 // --- Initialization ---
 init();
@@ -257,6 +270,9 @@ function startGame(playerRace) {
         
         createUniverseVisuals(universeData.systems, universeData.planets);
         console.log('Universe visuals created'); // DEBUG
+
+        // --- Initialize integrated modules ---
+        initializeIntegratedModules();
 
         // --- Create Portals ---
         // createPortals(); // TODO: Reimplementare la logica dei portali con i dati del giocatore
@@ -479,26 +495,69 @@ function animate() {
     player.update(delta, moveForward, moveBackward, moveLeft, moveRight, moveUp, moveDown, cameraDirection);
     controls.getObject().position.copy(player.position);
 
-    // --- Update Universe ---
-    universeGenerator.updatePlanetPositions(delta * 10); // Accelera il movimento orbitale per visibilità
-    planetMeshes.forEach(mesh => {
-        mesh.position.copy(mesh.userData.planetData.position);
-        mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
-    });
-
-    // --- Update Enemies ---
-    for (let i = activeEnemies.length - 1; i >= 0; i--) {
-        const enemy = activeEnemies[i];
-        if (enemy.isActive) {
-            // enemy.update() ora ritorna i dati del proiettile se spara, altrimenti null.
-            const enemyProjectileData = enemy.update(delta, player); 
-            if (enemyProjectileData) {
-                createProjectile(enemyProjectileData); // Crea proiettile nemico
+    // --- Update based on game mode ---
+    switch (gameMode) {
+        case 'space':
+            // --- Update Universe ---
+            universeGenerator.updatePlanetPositions(delta * 10); // Accelera il movimento orbitale per visibilità
+            planetMeshes.forEach(mesh => {
+                mesh.position.copy(mesh.userData.planetData.position);
+                mesh.rotation.y += 0.01 * delta; // Rotazione pianeti su se stessi
+            });
+            
+            // Aggiorna anche il modulo solare integrato
+            if (solarSystem) {
+                solarSystem.update(delta);
             }
-        } else {
-            // Rimuovi nemico inattivo (distrutto)
-            enemy.removeFromScene(scene);
-            activeEnemies.splice(i, 1);
+            break;
+            
+        case 'planet':
+            // Aggiorna il generatore di terreno quando in modalità pianeta
+            if (terrainGenerator) {
+                terrainGenerator.update(delta, player.position);
+            }
+            break;
+            
+        case 'space-combat':
+            // Aggiorna il sistema di combattimento spaziale
+            if (spaceCombat) {
+                spaceCombat.update(delta);
+                
+                // Ritorna alla modalità spazio se il combattimento è finito
+                if (spaceCombat.isCombatComplete && spaceCombat.isCombatComplete()) {
+                    switchGameMode('space');
+                }
+            }
+            break;
+            
+        case 'ground-combat':
+            // Aggiorna il sistema di combattimento terrestre
+            if (groundCombat) {
+                groundCombat.update(delta);
+                
+                // Ritorna alla modalità pianeta se il combattimento è finito
+                if (groundCombat.isCombatComplete && groundCombat.isCombatComplete()) {
+                    switchGameMode('planet');
+                }
+            }
+            break;
+    }
+
+    // --- Update Enemies --- (solo in modalità appropriate)
+    if (gameMode === 'space' || gameMode === 'space-combat') {
+        for (let i = activeEnemies.length - 1; i >= 0; i--) {
+            const enemy = activeEnemies[i];
+            if (enemy.isActive) {
+                // enemy.update() ora ritorna i dati del proiettile se spara, altrimenti null.
+                const enemyProjectileData = enemy.update(delta, player); 
+                if (enemyProjectileData) {
+                    createProjectile(enemyProjectileData); // Crea proiettile nemico
+                }
+            } else {
+                // Rimuovi nemico inattivo (distrutto)
+                enemy.removeFromScene(scene);
+                activeEnemies.splice(i, 1);
+            }
         }
     }
 
@@ -514,6 +573,11 @@ function animate() {
 
     // --- Update UI ---
     updateUI();
+
+    // --- Update gameIntegration ---
+    if (gameIntegration) {
+        gameIntegration.update(delta);
+    }
 
     // --- Render Scene ---
     renderer.render(scene, camera);
@@ -565,7 +629,6 @@ function updateProjectiles(delta) {
     for (let i = activeProjectiles.length - 1; i >= 0; i--) {
         const projectile = activeProjectiles[i];
         const moveDistance = projectile.speed * delta;
-        const prevPosition = projectile.mesh.position.clone();
         projectile.mesh.position.addScaledVector(projectile.direction, moveDistance);
         projectile.distanceTraveled += moveDistance;
 
@@ -779,6 +842,36 @@ function onKeyDown(event) {
                  moveDown = true;
              }
             break;
+        // NUOVI CONTROLLI PER MODALITÀ DI GIOCO
+        case 'Digit1': // Tasto 1 - Modalità spazio
+            switchGameMode('space');
+            break;
+        case 'Digit2': // Tasto 2 - Modalità pianeta
+            // Solo se c'è un pianeta target
+            if (currentTargetPlanet) {
+                switchGameMode('planet');
+            }
+            break;
+        case 'Digit3': // Tasto 3 - Modalità combattimento spaziale
+            switchGameMode('space-combat');
+            break;
+        case 'Digit4': // Tasto 4 - Modalità combattimento terrestre
+            // Solo se siamo in modalità pianeta
+            if (gameMode === 'planet') {
+                switchGameMode('ground-combat');
+            }
+            break;
+        case 'KeyM': // Tasto M - Cambia modalità ciclicamente
+            if (gameMode === 'space') {
+                switchGameMode('planet');
+            } else if (gameMode === 'planet') {
+                switchGameMode('ground-combat');
+            } else if (gameMode === 'ground-combat') {
+                switchGameMode('space-combat');
+            } else {
+                switchGameMode('space');
+            }
+            break;
     }
 }
 
@@ -893,6 +986,12 @@ function attemptConquerPlanet() {
                 }
             }
             // -------------------------------------------------
+            
+            // NUOVO: Passa alla modalità pianeta dopo la conquista
+            switchGameMode('planet');
+        } else {
+            // Se fallisce la conquista pacifica, passa al combattimento terrestre
+            switchGameMode('ground-combat');
         }
         // TODO: Mostrare il messaggio all'utente in modo più visibile
     }
@@ -1089,11 +1188,158 @@ function openLegendScreen() {
     controls.unlock(); // Sblocca il puntatore per interagire con la UI
     closeUpgradesScreen(); // Chiudi potenziamenti se aperti
     legendScreen.classList.remove('hidden');
-    isLegendOpen = true;
 }
 
 function closeLegendScreen() {
     legendScreen.classList.add('hidden');
-    isLegendOpen = false;
     // Non bloccare automaticamente il puntatore
+}
+
+// --- Game Mode Logic ---
+function switchGameMode(newMode) {
+    // Disattiva tutti i sistemi
+    deactivateAllSystems();
+    
+    // Imposta la nuova modalità
+    gameMode = newMode;
+    
+    // Attiva i sistemi appropriati
+    switch (newMode) {
+        case 'space':
+            setupSpaceMode();
+            break;
+            
+        case 'planet':
+            setupPlanetMode();
+            break;
+            
+        case 'space-combat':
+            setupSpaceCombatMode();
+            break;
+            
+        case 'ground-combat':
+            setupGroundCombatMode();
+            break;
+    }
+    
+    console.log(`Game mode switched to: ${newMode}`);
+}
+
+// NUOVA FUNZIONE: Disattiva tutti i sistemi
+function deactivateAllSystems() {
+    if (solarSystem) solarSystem.active = false;
+    if (terrainGenerator) terrainGenerator.active = false;
+    if (spaceCombat) spaceCombat.deactivate();
+    if (groundCombat) groundCombat.deactivate();
+}
+
+// NUOVA FUNZIONE: Configura la modalità spazio
+function setupSpaceMode() {
+    if (solarSystem) solarSystem.active = true;
+    // Altre configurazioni...
+}
+
+// NUOVA FUNZIONE: Configura la modalità pianeta
+function setupPlanetMode() {
+    if (terrainGenerator) {
+        // Configura il tipo di pianeta in base a currentTargetPlanet
+        if (currentTargetPlanet) {
+            terrainGenerator.setPlanetType(getPlanetTypeForTerrain(currentTargetPlanet));
+        } else {
+            terrainGenerator.setPlanetType('earth'); // Tipo di default
+        }
+        terrainGenerator.initialize();
+        terrainGenerator.active = true;
+    }
+    // Altre configurazioni...
+}
+
+// NUOVA FUNZIONE: Configura la modalità combattimento spaziale
+function setupSpaceCombatMode() {
+    if (spaceCombat) {
+        spaceCombat.initialize(player.position.clone());
+        spaceCombat.activate();
+    }
+    // Altre configurazioni...
+}
+
+// NUOVA FUNZIONE: Configura la modalità combattimento terrestre
+function setupGroundCombatMode() {
+    if (groundCombat) {
+        groundCombat.initialize();
+        groundCombat.activate();
+        
+        // Collega il terreno al sistema di fisica
+        if (terrainGenerator) {
+            groundCombat.physics.setTerrain(terrainGenerator);
+        }
+    }
+    // Altre configurazioni...
+}
+
+// NUOVA FUNZIONE: Determina il tipo di pianeta per il generatore di terreno
+function getPlanetTypeForTerrain(planet) {
+    // Mappa il tipo di pianeta ai tipi supportati dal generatore di terreno
+    if (!planet) return 'earth';
+    
+    // Usa il colore o altre proprietà del pianeta per determinare il tipo
+    const color = new THREE.Color(planet.color);
+    
+    if (color.r > 0.6 && color.g < 0.4) return 'mars'; // Rosso = Marte
+    if (color.b > 0.6 && color.g < 0.4) return 'ice'; // Blu = Ghiaccio
+    if (color.g > 0.6 && color.r < 0.4) return 'alien'; // Verde = Alieno
+    if (color.r > 0.7 && color.g > 0.7) return 'desert'; // Giallo = Deserto
+    
+    return 'earth'; // Default
+}
+
+// NUOVA FUNZIONE: Inizializza i moduli integrati
+function initializeIntegratedModules() {
+    // Opzioni per i moduli
+    const gameOptions = {
+        debugMode: false,
+        solarSystem: {
+            starCount: 1000,
+            showLabels: true
+        },
+        terrain: {
+            chunkSize: 32,
+            heightScale: 20,
+            resolution: 64
+        },
+        spaceCombat: {
+            difficulty: 1
+        },
+        groundCombat: {
+            difficulty: 1
+        }
+    };
+    
+    // Inizializza i moduli singolarmente
+    solarSystem = new SolarSystem(scene, gameOptions.solarSystem);
+    terrainGenerator = new TerrainGenerator(scene, gameOptions.terrain);
+    spaceCombat = new SpaceCombat(scene, camera, gameOptions.spaceCombat);
+    groundCombat = new GroundCombat(scene, camera, gameOptions.groundCombat);
+    
+    // Inizializza il sistema di gestione centrale
+    gameIntegration = new GameIntegration(gameOptions);
+    
+    // Collega moduli esistenti e nuovi moduli
+    linkLegacyAndNewModules();
+    
+    console.log('Integrated modules initialized');
+}
+
+// NUOVA FUNZIONE: Collega i moduli esistenti con quelli nuovi
+function linkLegacyAndNewModules() {
+    // Trasferisci i dati dal sistema universo esistente al nuovo sistema solare
+    if (universeGenerator && universeGenerator.systems) {
+        solarSystem.importLegacyData(universeGenerator.systems, planetMeshes);
+    }
+    
+    // Aggiorna le configurazioni basate sul giocatore
+    if (player) {
+        spaceCombat.setPlayerStats(player.attackPower, player.maxHealth);
+        groundCombat.setPlayerStats(player.attackPower, player.maxHealth);
+    }
 } 

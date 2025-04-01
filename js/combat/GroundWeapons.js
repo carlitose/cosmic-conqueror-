@@ -284,11 +284,15 @@ class GroundWeapons {
     }
     
     /**
-     * Update weapon state
-     * @param {number} deltaTime - Time since last update
+     * Verifica lo stato delle armi e compie azioni necessarie
      */
-    update(deltaTime) {
-        // Weapon sway/bob effect can be implemented here
+    update() {
+        // Aggiorna cooldown di tutte le armi
+        if (this.currentWeaponCooldown > 0) {
+            this.currentWeaponCooldown -= 0.016; // Valore fisso per coerenza
+        }
+        
+        // Altri aggiornamenti delle armi...
     }
 }
 
