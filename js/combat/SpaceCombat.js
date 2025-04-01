@@ -24,6 +24,15 @@ export class SpaceCombat {
         
         // Geometrie e materiali riutilizzabili
         this.setupMaterials();
+        
+        // Aggiunto flag per lo stato attivo/inattivo
+        this.active = false;
+        
+        // Variabili di stato
+        this.enemiesDestroyed = 0;
+        
+        // Opzioni e difficoltà
+        this.difficulty = 1;
     }
     
     /**
@@ -250,6 +259,8 @@ export class SpaceCombat {
      * Aggiorna lo stato del combattimento
      */
     update(deltaTime) {
+        if (!this.active) return; // Non aggiornare se inattivo
+        
         // Aggiorna nemici
         this.updateEnemies(deltaTime);
         
@@ -497,6 +508,22 @@ export class SpaceCombat {
         }
         
         return false;
+    }
+    
+    /**
+     * Attiva il sistema di combattimento spaziale
+     */
+    activate() {
+        this.active = true;
+        console.log("Combattimento spaziale attivato");
+    }
+    
+    /**
+     * Disattiva il sistema di combattimento spaziale
+     */
+    deactivate() {
+        this.active = false;
+        console.log("Combattimento spaziale disattivato");
     }
 }
  

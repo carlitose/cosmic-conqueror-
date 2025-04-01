@@ -227,24 +227,40 @@ function init() {
 
 // --- Create Target Indicator Arrow ---
 function createTargetIndicator() {
-    const arrowShape = new THREE.Shape();
-    arrowShape.moveTo(0, 0.5);
-    arrowShape.lineTo(0.5, -0.5);
-    arrowShape.lineTo(0.2, -0.5);
-    arrowShape.lineTo(0.2, -1.5);
-    arrowShape.lineTo(-0.2, -1.5);
-    arrowShape.lineTo(-0.2, -0.5);
-    arrowShape.lineTo(-0.5, -0.5);
-    arrowShape.closePath();
-
-    const extrudeSettings = { depth: 0.2, bevelEnabled: false };
-    const geometry = new THREE.ExtrudeGeometry(arrowShape, extrudeSettings);
-    const material = new THREE.MeshPhongMaterial({ color: 0x00ff00, emissive: 0x005500 });
+    // Al posto della freccia, creiamo un puntatore del mouse semplice
+    const crosshairSize = 0.02;
+    const crosshairGeometry = new THREE.CircleGeometry(crosshairSize, 32);
+    const crosshairMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.8 
+    });
     
-    targetIndicatorArrow = new THREE.Mesh(geometry, material);
-    targetIndicatorArrow.scale.set(5, 5, 5); // Rendi la freccia più grande
-    targetIndicatorArrow.visible = false; // Inizia nascosta
-    scene.add(targetIndicatorArrow);
+    targetIndicatorArrow = new THREE.Mesh(crosshairGeometry, crosshairMaterial);
+    targetIndicatorArrow.position.set(0, 0, -0.5); // Posizionato davanti alla camera
+    targetIndicatorArrow.visible = true; // Sempre visibile
+
+    // Aggiungiamo il crosshair alla camera invece che alla scena
+    camera.add(targetIndicatorArrow);
+}
+
+// Aggiungere anche un CSS crosshair come backup
+function addCrosshairCSS() {
+    // Crea un elemento div per il crosshair
+    const crosshair = document.createElement('div');
+    crosshair.id = 'crosshair';
+    crosshair.style.position = 'absolute';
+    crosshair.style.top = '50%';
+    crosshair.style.left = '50%';
+    crosshair.style.transform = 'translate(-50%, -50%)';
+    crosshair.style.width = '10px';
+    crosshair.style.height = '10px';
+    crosshair.style.borderRadius = '50%';
+    crosshair.style.backgroundColor = 'rgba(255, 255, 255, 0.7)';
+    crosshair.style.pointerEvents = 'none'; // Non interferisce con gli eventi del mouse
+    
+    // Aggiungi al contenitore di gioco
+    document.getElementById('game-container').appendChild(crosshair);
 }
 
 // --- Game Start ---
@@ -273,6 +289,9 @@ function startGame(playerRace) {
 
         // --- Initialize integrated modules ---
         initializeIntegratedModules();
+        
+        // Aggiungi crosshair CSS
+        addCrosshairCSS();
 
         // --- Create Portals ---
         // createPortals(); // TODO: Reimplementare la logica dei portali con i dati del giocatore
@@ -565,7 +584,7 @@ function animate() {
     updateProjectiles(delta);
 
     // --- Update Target Indicator ---
-    updateTargetIndicator(); // <-- Nuovo: Aggiorna posizione/rotazione freccia
+    updateTargetIndicator();
 
     // --- Check Interactions ---
     checkPlanetInteraction();
@@ -587,41 +606,11 @@ function animate() {
 
 // --- Update Target Indicator ---
 function updateTargetIndicator() {
-    if (!player || !targetIndicatorArrow) return;
-
-    let targetPosition = null;
-
-    // Se c'è un pianeta selezionato (in range), punta a quello
-    if (currentTargetPlanet) {
-        targetPosition = currentTargetPlanet.position;
-    } else {
-        // Altrimenti, trova il pianeta più vicino (ma non troppo vicino)
-        const result = universeGenerator.findNearestPlanet(player.position, 5000); // Cerca più lontano
-        if (result.planet && player.position.distanceTo(result.planet.position) > 30) { // Non mostrare se troppo vicini
-            targetPosition = result.planet.position;
-        } 
-    }
-
-    if (targetPosition) {
-        targetIndicatorArrow.visible = true;
-
-        // Posiziona la freccia leggermente davanti e sopra la camera
-        const offsetDistance = 15;
-        const indicatorPosition = camera.position.clone().add( 
-            new THREE.Vector3(0, 0, -offsetDistance).applyQuaternion(camera.quaternion)
-        );
-         indicatorPosition.y += 2; // Alzala un po'
-        targetIndicatorArrow.position.copy(indicatorPosition);
-
-        // Orienta la freccia verso il target
-        targetIndicatorArrow.lookAt(targetPosition);
-        
-        // Ruota per puntare correttamente (la geometria extrude potrebbe essere orientata su Y)
-        targetIndicatorArrow.rotateX(Math.PI / 2); 
-
-    } else {
-        targetIndicatorArrow.visible = false;
-    }
+    // Rimuoviamo tutta la logica precedente per la freccia che punterebe ai pianeti
+    // Il mirino rimarrà sempre al centro dello schermo
+    return;
+    
+    // La funzione originale è stata rimossa perché ora utilizziamo un mirino fisso
 }
 
 // --- Update Functions ---
