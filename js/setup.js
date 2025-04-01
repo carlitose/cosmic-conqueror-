@@ -174,4 +174,14 @@ export function getControls() {
  */
 export function getComposer() {
     return composer;
-} 
+}
+
+// Add click event listener for pointer lock
+document.getElementById('game-container').addEventListener('click', function() {
+    console.log("Game container clicked, requesting pointer lock");
+    const controls = getControls();
+    if (controls && !controls.isLocked) {
+        console.log("Attempting to lock pointer");
+        controls.lock();
+    }
+}); 

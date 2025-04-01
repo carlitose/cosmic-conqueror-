@@ -78,22 +78,21 @@ export class Player {
     }
     
     /**
-     * Aggiorna la posizione e lo stato del giocatore
-     * @param {number} deltaTime - Tempo trascorso dall'ultimo frame
-     * @param {boolean} moveForward - Se il giocatore sta andando avanti
-     * @param {boolean} moveBackward - Se il giocatore sta andando indietro
-     * @param {boolean} moveLeft - Se il giocatore sta andando a sinistra
-     * @param {boolean} moveRight - Se il giocatore sta andando a destra
-     * @param {boolean} moveUp - Se il giocatore sta andando su
-     * @param {boolean} moveDown - Se il giocatore sta andando giù
-     * @param {THREE.Vector3} cameraDirection - Direzione della camera
+     * Aggiorna lo stato del player
      */
     update(deltaTime, moveForward, moveBackward, moveLeft, moveRight, moveUp, moveDown, cameraDirection) {
         // Aggiorna energia e salute
         this.regenerate(deltaTime);
         
-        // Calcola velocità in base alla direzione della camera
-        const actualSpeed = this.getSpeed() * deltaTime;
+        // Debug: log dettagliato dei movimenti ogni 60 frame
+        if (window.performanceMonitor && window.performanceMonitor.frameCount % 60 === 0) {
+            console.log("Player Update - Input:", 
+                {F: moveForward, B: moveBackward, L: moveLeft, R: moveRight, U: moveUp, D: moveDown});
+            console.log("Camera Direction:", cameraDirection);
+        }
+        
+        // Calcola velocità base (non moltiplicata per deltaTime ancora)
+        const speedBase = this.getSpeed();
         
         // Resetta velocità
         this.velocity.set(0, 0, 0);
@@ -103,59 +102,83 @@ export class Player {
         
         if (this.isFlying) {
             // In modalità volo, usa la direzione completa della camera (inclusa componente Y)
-            // Applica movimento in base agli input nella direzione della telecamera
+            // Questo permette di volare su/giù quando si guarda su/giù
             if (moveForward) {
-                this.velocity.add(forward.clone().multiplyScalar(actualSpeed));
+                // Usa la direzione completa della camera, inclusa Y
+                this.velocity.add(forward.clone().multiplyScalar(speedBase));
             }
             if (moveBackward) {
-                this.velocity.add(forward.clone().multiplyScalar(-actualSpeed));
+                // Usa la direzione completa della camera, inclusa Y, ma inversa
+                this.velocity.add(forward.clone().multiplyScalar(-speedBase));
+            }
+            
+            // IMPORTANTE: In volo, calcoliamo il vettore RIGHT in modo diverso
+            // Utilizziamo un riferimento UP assoluto per evitare problemi quando guardiamo su/giù
+            const worldUp = new THREE.Vector3(0, 1, 0);
+            const right = new THREE.Vector3();
+            right.crossVectors(worldUp, forward).normalize();
+            
+            if (moveLeft) {
+                this.velocity.add(right.clone().multiplyScalar(-speedBase)); // SEGNO NEGATIVO per andare a sinistra
+            }
+            if (moveRight) {
+                this.velocity.add(right.clone().multiplyScalar(speedBase)); // SEGNO POSITIVO per andare a destra
+            }
+            
+            // Controlli verticali dedicati (indipendenti dalla telecamera)
+            // Manteniamo questi per dare più controllo al giocatore
+            if (moveUp) {
+                this.velocity.y += speedBase;
+            } else if (moveDown) {
+                this.velocity.y -= speedBase;
+            }
+            
+            // Debug della direzione e velocità in volo
+            if (window.performanceMonitor && window.performanceMonitor.frameCount % 60 === 0) {
+                console.log("FLYING MODE - Forward vector:", forward);
+                console.log("FLYING MODE - Right vector:", right);
+                console.log("FLYING MODE - Resulting velocity:", this.velocity);
+            }
+        } else {
+            // In modalità non-volo, forziamo il movimento orizzontale
+            forward.y = 0;
+            if (forward.lengthSq() > 0.001) {
+                forward.normalize();
+            } else {
+                // Se la camera punta direttamente in alto/basso, usa l'ultimo forward noto
+                forward.set(0, 0, -1); // Default forward
             }
             
             // Calcola il vettore destro perpendicolare alla direzione forward
             const right = new THREE.Vector3();
             right.crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
             
-            if (moveLeft) {
-                this.velocity.add(right.clone().multiplyScalar(actualSpeed));
-            }
-            if (moveRight) {
-                this.velocity.add(right.clone().multiplyScalar(-actualSpeed));
-            }
-            
-            // Calcola il vettore up in base alla direzione della camera
-            const up = new THREE.Vector3(0, 1, 0);
-            
-            // Movimento verticale (volo)
-            if (moveUp) {
-                this.velocity.add(up.clone().multiplyScalar(actualSpeed));
-            } else if (moveDown) {
-                this.velocity.add(up.clone().multiplyScalar(-actualSpeed));
-            }
-        } else {
-            // In modalità non-volo, forziamo il movimento orizzontale
-            forward.y = 0;
-            forward.normalize();
-            
-            // Calcola il vettore destro perpendicolare alla direzione forward
-            const right = new THREE.Vector3();
-            right.crossVectors(new THREE.Vector3(0, 1, 0), forward);
-            
             // Applica movimento in base agli input
             if (moveForward) {
-                this.velocity.add(forward.clone().multiplyScalar(actualSpeed));
+                this.velocity.add(forward.clone().multiplyScalar(speedBase));
             }
             if (moveBackward) {
-                this.velocity.add(forward.clone().multiplyScalar(-actualSpeed));
+                this.velocity.add(forward.clone().multiplyScalar(-speedBase));
             }
+            
+            // CORREZIONE: Invertiamo i segni per allineare con la logica intuitiva
             if (moveLeft) {
-                this.velocity.add(right.clone().multiplyScalar(actualSpeed));
+                this.velocity.add(right.clone().multiplyScalar(-speedBase)); // SEGNO NEGATIVO per andare a sinistra
             }
             if (moveRight) {
-                this.velocity.add(right.clone().multiplyScalar(-actualSpeed));
+                this.velocity.add(right.clone().multiplyScalar(speedBase)); // SEGNO POSITIVO per andare a destra
             }
             
             // A terra, non c'è movimento verticale
             this.velocity.y = 0;
+        }
+        
+        // CORREZIONE: Moltiplica per deltaTime solo qui, dopo aver calcolato la direzione
+        this.velocity.multiplyScalar(deltaTime);
+        
+        // Debug della velocità prima di applicarla
+        if (window.performanceMonitor && window.performanceMonitor.frameCount % 60 === 0) {
+            console.log("Velocità calcolata:", this.velocity, "Speed base:", speedBase, "DeltaTime:", deltaTime);
         }
         
         // Applica effettivamente il movimento

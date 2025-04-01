@@ -72,33 +72,45 @@ export function initializeControls(playerCamera, element) {
  * @param {KeyboardEvent} event - L'evento della tastiera
  */
 function onKeyDown(event) {
-    console.log("Key pressed:", event.code, "Lock status:", controls?.isLocked);
+    // Debug avanzato per comprendere lo stato dei controlli
+    if (window.performanceMonitor && window.performanceMonitor.frameCount % 60 === 0) {
+        console.log("Key pressed:", event.code, 
+                    "Controls:", controls ? "defined" : "undefined", 
+                    "Lock status:", controls?.isLocked,
+                    "Movement state:", JSON.stringify(movementState));
+    }
     
-    if (!controls?.isLocked) {
-        console.log("Input ignored - pointer not locked");
+    // Nota: Registriamo sempre le chiavi di movimento, anche se i controlli non sono bloccati.
+    // Questo risolve un problema comune dove il movimento non risponde dopo che il blocco del mouse viene ripristinato.
+    
+    // Controlli di movimento - sempre registrati
+    if (KEYS.FORWARD.includes(event.code)) {
+        movementState.forward = true;
+        console.log("Set forward to TRUE");
+    } else if (KEYS.BACKWARD.includes(event.code)) {
+        movementState.backward = true;
+        console.log("Set backward to TRUE");
+    } else if (KEYS.LEFT.includes(event.code)) {
+        movementState.left = true;
+        console.log("Set left to TRUE");
+    } else if (KEYS.RIGHT.includes(event.code)) {
+        movementState.right = true;
+        console.log("Set right to TRUE");
+    } else if (KEYS.UP.includes(event.code)) {
+        movementState.up = true;
+        console.log("Set up to TRUE");
+    } else if (KEYS.DOWN.includes(event.code)) {
+        movementState.down = true;
+        console.log("Set down to TRUE");
+    }
+    
+    // Se i controlli non sono definiti o il puntatore non è bloccato,
+    // abbiamo registrato il movimento ma non procediamo con azioni aggiuntive
+    if (!controls || !controls.isLocked) {
         return;
     }
     
-    // Controlli di movimento
-    if (KEYS.FORWARD.includes(event.code)) {
-        console.log("Moving forward");
-        movementState.forward = true;
-    } else if (KEYS.BACKWARD.includes(event.code)) {
-        console.log("Moving backward");
-        movementState.backward = true;
-    } else if (KEYS.LEFT.includes(event.code)) {
-        console.log("Moving left");
-        movementState.left = true;
-    } else if (KEYS.RIGHT.includes(event.code)) {
-        console.log("Moving right");
-        movementState.right = true;
-    } else if (KEYS.UP.includes(event.code)) {
-        console.log("Moving up");
-        movementState.up = true;
-    } else if (KEYS.DOWN.includes(event.code)) {
-        console.log("Moving down");
-        movementState.down = true;
-    }
+    // Altre azioni che richiedono il blocco del puntatore possono essere aggiunte qui
 }
 
 /**
@@ -111,22 +123,22 @@ function onKeyUp(event) {
     
     // Controlli di movimento
     if (KEYS.FORWARD.includes(event.code)) {
-        console.log("Stop forward");
+        console.log("Set forward to FALSE");
         movementState.forward = false;
     } else if (KEYS.BACKWARD.includes(event.code)) {
-        console.log("Stop backward");
+        console.log("Set backward to FALSE");
         movementState.backward = false;
     } else if (KEYS.LEFT.includes(event.code)) {
-        console.log("Stop left");
+        console.log("Set left to FALSE");
         movementState.left = false;
     } else if (KEYS.RIGHT.includes(event.code)) {
-        console.log("Stop right");
+        console.log("Set right to FALSE");
         movementState.right = false;
     } else if (KEYS.UP.includes(event.code)) {
-        console.log("Stop up");
+        console.log("Set up to FALSE");
         movementState.up = false;
     } else if (KEYS.DOWN.includes(event.code)) {
-        console.log("Stop down");
+        console.log("Set down to FALSE");
         movementState.down = false;
     }
 }

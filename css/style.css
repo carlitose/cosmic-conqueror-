@@ -475,4 +475,20 @@ body {
     font-size: 16px;
     text-shadow: 1px 1px 2px black;
     z-index: 10;
+}
+
+/* Crosshair */
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    z-index: 1000;
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
 } 

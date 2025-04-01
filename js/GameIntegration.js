@@ -302,24 +302,23 @@ export class GameIntegration {
     update(deltaTime) {
         performanceMonitor.checkQualityMode();
         
-        // Verifica periodica degli eventi input
-        if (performanceMonitor.frameCount % 600 === 0) {
-            // Re-init controlli se necessario
-            if (!this.pointerLockControls?.isLocked) {
-                console.log("Re-checking player controls...");
-                initializeControls(this.camera, document.body).then(() => {
-                    console.log("Player controls re-initialized");
-                });
-            }
-        }
-        
+        // Verifica periodica delle risorse
         if (performanceMonitor.frameCount % 300 === 0) {
             performanceMonitor.cleanupUnusedResources(this.collisionCache);
         }
 
         // Debug movimento
         const movement = getMovementState();
-        if (performanceMonitor.frameCount % 60 === 0) {
+        
+        // Debug logging periodico per movimento e direzione
+        const frameCount = performanceMonitor.frameCount || 0;
+        if (frameCount % 60 === 0) {
+            // Calcola direzione camera per debugging
+            const cameraDirection = new THREE.Vector3(0, 0, -1);
+            cameraDirection.applyQuaternion(this.camera.quaternion);
+            
+            console.log("Camera quaternion:", this.camera.quaternion);
+            console.log("Camera direction vector:", cameraDirection);
             console.log("Movement state:", movement);
         }
         
@@ -939,6 +938,26 @@ export class GameIntegration {
 
     // --- Gestione Input Globale ---
     handleKeyDown(event) {
+        // Debug tasto premuto
+        console.log("GameIntegration: Key pressed:", event.code);
+        
+        // Tasti numerici per FPS limit
+        if (event.code.startsWith('Digit')) {
+            const num = parseInt(event.code.replace('Digit', ''), 10);
+            console.log("Numeric key pressed:", num);
+            
+            if (num === 3) {
+                console.log("Setting FPS to 30");
+                performanceMonitor.setTargetFPS(30);
+            } else if (num === 6) {
+                console.log("Setting FPS to 60");
+                performanceMonitor.setTargetFPS(60);
+            } else if (num === 1 && event.code === 'Digit1' && event.shiftKey) {
+                console.log("Setting FPS to 120");
+                performanceMonitor.setTargetFPS(120);
+            }
+        }
+        
         // Gestisci prima gli shortcut UI che sbloccano il cursore
         if (event.code === 'KeyU') {
             this.state.uiState.upgradesOpen ? closeUpgradesScreen() : openUpgradesScreen();

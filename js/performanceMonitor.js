@@ -30,25 +30,31 @@ class PerformanceMonitor {
         this.composer = composer;
         
         // Configura il selettore FPS se presente
-        console.log("FPS select element:", fpsSelectElement, fpsSelectElement?.id);
+        console.log("FPS select element:", fpsSelectElement?.id);
         
         if (fpsSelectElement) {
-            // Rimuovi eventuali listener esistenti
-            const newElement = fpsSelectElement.cloneNode(true);
-            if (fpsSelectElement.parentNode) {
-                fpsSelectElement.parentNode.replaceChild(newElement, fpsSelectElement);
+            // Funzione per gestire il cambio di FPS
+            const handleFpsChange = (event) => {
+                const newFps = parseInt(event.target.value, 10);
+                console.log("FPS selector changed to:", newFps);
+                this.setTargetFPS(newFps);
+            };
+            
+            // Aggiungi il listener senza clonare l'elemento
+            fpsSelectElement.addEventListener('change', handleFpsChange);
+            
+            // Imposta il valore iniziale
+            const initialFps = parseInt(fpsSelectElement.value, 10);
+            if (!isNaN(initialFps)) {
+                this.setTargetFPS(initialFps);
+                console.log("Initial FPS set to:", initialFps);
+            } else {
+                this.setTargetFPS(PERFORMANCE.TARGET_FPS);
+                console.log("Using default FPS:", PERFORMANCE.TARGET_FPS);
             }
-            
-            // Aggiungi il nuovo listener
-            newElement.addEventListener('change', (event) => {
-                console.log("FPS changed to:", event.target.value);
-                this.setTargetFPS(parseInt(event.target.value));
-            });
-            
-            // Imposta subito il valore iniziale
-            this.setTargetFPS(parseInt(newElement.value));
         } else {
             console.warn("FPS selector element not found");
+            this.setTargetFPS(PERFORMANCE.TARGET_FPS);
         }
         
         console.log("Performance monitor initialized");
@@ -290,26 +296,23 @@ class PerformanceMonitor {
      * @returns {boolean} true se il frame dovrebbe essere renderizzato
      */
     shouldRenderFrame() {
-        // Se il target è 0, renderizza sempre (nessun limite)
-        if (this.targetFrameRate === 0) {
+        if (this.targetFrameRate === 0 || this.targetFrameRate === Infinity) { // Gestisci 0 o Infinity come illimitato
             return true;
         }
-        
-        const now = performance.now();
-        const timeSinceLastFrame = now - this.lastFrameTimestamp;
-        const targetFrameDuration = 1000 / this.targetFrameRate;
-        
+        const currentTime = performance.now();
+        const elapsed = currentTime - this.lastFrameTimestamp;
+        const frameDuration = 1000 / this.targetFrameRate;
+
         // Log ogni 300 frames per debug
         if (this.frameCount % 300 === 0) {
-            console.log(`FPS limiter: Target=${this.targetFrameRate}, time since last frame=${timeSinceLastFrame.toFixed(2)}ms, target frame duration=${targetFrameDuration.toFixed(2)}ms`);
+            console.log(`FPS limiter: Target=${this.targetFrameRate}, elapsed=${elapsed.toFixed(2)}ms, frameDuration=${frameDuration.toFixed(2)}ms`);
         }
-        
-        // Se abbiamo aspettato abbastanza, renderizza il frame
-        if (timeSinceLastFrame >= targetFrameDuration) {
-            this.lastFrameTimestamp = now;
+
+        if (elapsed >= frameDuration) {
+            // Usa solo currentTime per evitare problemi con lag elevato
+            this.lastFrameTimestamp = currentTime;
             return true;
         }
-        
         return false;
     }
     
