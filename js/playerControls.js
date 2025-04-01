@@ -24,15 +24,24 @@ let camera = null;
  * Inizializza i controlli del giocatore
  * @param {THREE.PerspectiveCamera} playerCamera - La camera per il controllo in prima persona
  * @param {HTMLElement} element - L'elemento DOM su cui applicare i controlli
- * @returns {PointerLockControls} I controlli inizializzati
+ * @returns {Promise<PointerLockControls>} I controlli inizializzati
  */
 export function initializeControls(playerCamera, element) {
     if (!playerCamera) {
         console.error('Camera non fornita per i controlli');
-        return null;
+        return Promise.reject(new Error('Camera non fornita'));
     }
     
+    console.log("Initializing player controls with camera:", playerCamera);
     camera = playerCamera;
+    
+    // Rimuovi eventuali listener esistenti in caso di reinizializzazione
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('keyup', onKeyUp);
+    document.removeEventListener('mousedown', onMouseDown);
+    
+    // Stampa KEYS per debug
+    console.log("Control keys setup:", KEYS);
     
     // Importa i controlli solo quando necessario per evitare dipendenze circolari
     return import('three/addons/controls/PointerLockControls.js')
@@ -44,7 +53,12 @@ export function initializeControls(playerCamera, element) {
             document.addEventListener('keyup', onKeyUp);
             document.addEventListener('mousedown', onMouseDown);
             
-            console.log("Player controls initialized");
+            console.log("Player controls initialized, event listeners added");
+            
+            // Test degli event listener
+            const testEvent = new KeyboardEvent('keydown', { code: 'KeyW' });
+            onKeyDown(testEvent);
+            
             return controls;
         })
         .catch(error => {
@@ -58,20 +72,31 @@ export function initializeControls(playerCamera, element) {
  * @param {KeyboardEvent} event - L'evento della tastiera
  */
 function onKeyDown(event) {
-    if (!controls?.isLocked) return;
+    console.log("Key pressed:", event.code, "Lock status:", controls?.isLocked);
+    
+    if (!controls?.isLocked) {
+        console.log("Input ignored - pointer not locked");
+        return;
+    }
     
     // Controlli di movimento
     if (KEYS.FORWARD.includes(event.code)) {
+        console.log("Moving forward");
         movementState.forward = true;
     } else if (KEYS.BACKWARD.includes(event.code)) {
+        console.log("Moving backward");
         movementState.backward = true;
     } else if (KEYS.LEFT.includes(event.code)) {
+        console.log("Moving left");
         movementState.left = true;
     } else if (KEYS.RIGHT.includes(event.code)) {
+        console.log("Moving right");
         movementState.right = true;
     } else if (KEYS.UP.includes(event.code)) {
+        console.log("Moving up");
         movementState.up = true;
     } else if (KEYS.DOWN.includes(event.code)) {
+        console.log("Moving down");
         movementState.down = true;
     }
 }
@@ -81,18 +106,27 @@ function onKeyDown(event) {
  * @param {KeyboardEvent} event - L'evento della tastiera
  */
 function onKeyUp(event) {
+    // Nota: Rimuoviamo il check su isLocked per assicurarci 
+    // che i tasti vengano rilasciati anche se il puntatore è sbloccato
+    
     // Controlli di movimento
     if (KEYS.FORWARD.includes(event.code)) {
+        console.log("Stop forward");
         movementState.forward = false;
     } else if (KEYS.BACKWARD.includes(event.code)) {
+        console.log("Stop backward");
         movementState.backward = false;
     } else if (KEYS.LEFT.includes(event.code)) {
+        console.log("Stop left");
         movementState.left = false;
     } else if (KEYS.RIGHT.includes(event.code)) {
+        console.log("Stop right");
         movementState.right = false;
     } else if (KEYS.UP.includes(event.code)) {
+        console.log("Stop up");
         movementState.up = false;
     } else if (KEYS.DOWN.includes(event.code)) {
+        console.log("Stop down");
         movementState.down = false;
     }
 }

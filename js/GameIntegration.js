@@ -10,7 +10,7 @@ import {
     closeUpgradesScreen, closeLegendScreen, showMessage, openUpgradesScreen, openLegendScreen
 } from './uiManager.js';
 import { initAudioPool, playSound, ensureAudioExists } from './audioManager.js';
-import { getMovementState, disposeControls } from './playerControls.js';
+import { getMovementState, disposeControls, initializeControls } from './playerControls.js';
 import { SolarSystem } from './space/SolarSystem.js';
 import { TerrainGenerator } from './planet/TerrainGenerator.js';
 import { SpaceCombat } from './combat/SpaceCombat.js';
@@ -137,6 +137,11 @@ export class GameIntegration {
             });
 
             // 5. Player Controls (Già inizializzati in setup.js)
+            // Inizializza i controlli player passando la camera e l'elemento DOM
+            initializeControls(this.camera, document.body).then(controls => {
+                console.log("Player controls initialized through initializeControls");
+            });
+            
             document.addEventListener('player-attack', this.handlePlayerAttack.bind(this));
             document.addEventListener('keydown', this.handleKeyDown.bind(this));
 
@@ -201,14 +206,33 @@ export class GameIntegration {
 
             // 5. Blocca controlli e avvia loop
             if (this.pointerLockControls) {
-                this.pointerLockControls.lock();
-                const hint = document.getElementById('controls-hint');
-                if (hint) hint.style.opacity = '0';
+                // Aggiungi listener per i cambiamenti di stato del pointer lock
+                document.addEventListener('pointerlockchange', () => {
+                    console.log("Pointer lock change, now locked:", this.pointerLockControls.isLocked);
+                    
+                    const hint = document.getElementById('controls-hint');
+                    if (this.pointerLockControls.isLocked) {
+                        // Mouse bloccato
+                        if (hint) hint.style.opacity = '0';
+                    } else {
+                        // Mouse sbloccato
+                        if (!this.state.uiState.upgradesOpen && !this.state.uiState.legendOpen && 
+                            !this.state.isPaused && !this.state.isGameOver) {
+                            if (hint) hint.style.opacity = '1';
+                        }
+                    }
+                });
+                
+                // Richiedi il lock dopo un piccolo delay per assicurarsi che il DOM sia pronto
+                setTimeout(() => {
+                    console.log("Requesting pointer lock");
+                    this.pointerLockControls.lock();
+                }, 100);
             } else {
                 console.error("PointerLockControls not available when starting game!");
             }
+            
             this.startGameLoop();
-
             console.log("Game Started!");
 
         } catch (error) {
@@ -277,13 +301,33 @@ export class GameIntegration {
      */
     update(deltaTime) {
         performanceMonitor.checkQualityMode();
+        
+        // Verifica periodica degli eventi input
+        if (performanceMonitor.frameCount % 600 === 0) {
+            // Re-init controlli se necessario
+            if (!this.pointerLockControls?.isLocked) {
+                console.log("Re-checking player controls...");
+                initializeControls(this.camera, document.body).then(controls => {
+                    console.log("Player controls re-initialized");
+                });
+            }
+        }
+        
         if (performanceMonitor.frameCount % 300 === 0) {
             performanceMonitor.cleanupUnusedResources(this.collisionCache);
         }
 
+        // Debug movimento
         const movement = getMovementState();
+        if (performanceMonitor.frameCount % 60 === 0) {
+            console.log("Movement state:", movement);
+        }
+        
         const cameraDirection = new THREE.Vector3();
         this.camera.getWorldDirection(cameraDirection);
+        
+        // Debug della posizione prima dell'aggiornamento
+        const prevPos = this.player.position.clone();
 
         this.player.update(
             deltaTime,
@@ -291,6 +335,14 @@ export class GameIntegration {
             movement.up, movement.down,
             cameraDirection
         );
+        
+        // Verifica se la posizione è cambiata
+        if (performanceMonitor.frameCount % 60 === 0) {
+            const newPos = this.player.position.clone();
+            const posChanged = !prevPos.equals(newPos);
+            console.log("Position changed:", posChanged, "From:", prevPos, "To:", newPos);
+        }
+        
         this.pointerLockControls.getObject().position.copy(this.player.position);
 
         this.worldManager.update(deltaTime, this.camera.position);

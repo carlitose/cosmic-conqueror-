@@ -30,10 +30,25 @@ class PerformanceMonitor {
         this.composer = composer;
         
         // Configura il selettore FPS se presente
+        console.log("FPS select element:", fpsSelectElement, fpsSelectElement?.id);
+        
         if (fpsSelectElement) {
-            fpsSelectElement.addEventListener('change', (event) => {
+            // Rimuovi eventuali listener esistenti
+            const newElement = fpsSelectElement.cloneNode(true);
+            if (fpsSelectElement.parentNode) {
+                fpsSelectElement.parentNode.replaceChild(newElement, fpsSelectElement);
+            }
+            
+            // Aggiungi il nuovo listener
+            newElement.addEventListener('change', (event) => {
+                console.log("FPS changed to:", event.target.value);
                 this.setTargetFPS(parseInt(event.target.value));
             });
+            
+            // Imposta subito il valore iniziale
+            this.setTargetFPS(parseInt(newElement.value));
+        } else {
+            console.warn("FPS selector element not found");
         }
         
         console.log("Performance monitor initialized");
@@ -271,27 +286,53 @@ class PerformanceMonitor {
     }
     
     /**
-     * Imposta il frame rate target
-     */
-    setTargetFPS(fps) {
-        this.targetFrameRate = fps;
-        console.log(`Target frame rate set to ${fps} FPS`);
-    }
-    
-    /**
-     * Determina se il frame dovrebbe essere renderizzato in base al limitatore di frame rate
+     * Verifica se è il momento di renderizzare un frame
+     * @returns {boolean} true se il frame dovrebbe essere renderizzato
      */
     shouldRenderFrame() {
-        const currentTime = performance.now();
-        const elapsed = currentTime - this.lastFrameTimestamp;
-        const frameDuration = 1000 / this.targetFrameRate;
+        // Se il target è 0, renderizza sempre (nessun limite)
+        if (this.targetFrameRate === 0) {
+            return true;
+        }
         
-        if (elapsed >= frameDuration) {
-            this.lastFrameTimestamp = currentTime - (elapsed % frameDuration);
+        const now = performance.now();
+        const timeSinceLastFrame = now - this.lastFrameTimestamp;
+        const targetFrameDuration = 1000 / this.targetFrameRate;
+        
+        // Log ogni 300 frames per debug
+        if (this.frameCount % 300 === 0) {
+            console.log(`FPS limiter: Target=${this.targetFrameRate}, time since last frame=${timeSinceLastFrame.toFixed(2)}ms, target frame duration=${targetFrameDuration.toFixed(2)}ms`);
+        }
+        
+        // Se abbiamo aspettato abbastanza, renderizza il frame
+        if (timeSinceLastFrame >= targetFrameDuration) {
+            this.lastFrameTimestamp = now;
             return true;
         }
         
         return false;
+    }
+    
+    /**
+     * Imposta il target FPS
+     * @param {number} fps - Target frame rate
+     */
+    setTargetFPS(fps) {
+        // Limita ad un minimo di 15 FPS o nessun limite (0)
+        if (fps !== 0 && fps < 15) fps = 15;
+        
+        // Se il valore non è cambiato, non fare nulla
+        if (this.targetFrameRate === fps) return;
+        
+        this.targetFrameRate = fps;
+        console.log(`Target frame rate changed to ${fps === 0 ? 'unlimited' : fps + ' FPS'}`);
+        
+        // Aggiorna l'UI se c'è un select element con id fps-select
+        const fpsSelector = document.getElementById('fps-select');
+        if (fpsSelector && fpsSelector.value !== String(fps)) {
+            console.log("Updating FPS select UI to", fps);
+            fpsSelector.value = String(fps);
+        }
     }
 }
 

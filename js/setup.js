@@ -51,8 +51,23 @@ export function initializeSetup(container) {
     composer = initializeRendererEffects();
 
     // --- Controls Setup (Pointer Lock) ---
+    // Nota: Ora usiamo initializeControls da playerControls.js per una gestione più unificata
+    // Questo è solo un placeholder per retrocompatibilità
     controls = new PointerLockControls(camera, document.body);
     scene.add(controls.getObject());
+
+    // Lasciamo questi eventi base ma i controlli veri vengono inizializzati in GameIntegration
+    document.addEventListener('pointerlockchange', () => {
+        console.log("Pointer lock change in setup.js, isLocked:", controls.isLocked);
+    });
+
+    controls.addEventListener('lock', () => {
+        console.log("Pointer locked!");
+    });
+
+    controls.addEventListener('unlock', () => {
+        console.log("Pointer unlocked!");
+    });
     
     // --- Window Resize Handler ---
     window.addEventListener('resize', onWindowResize);
