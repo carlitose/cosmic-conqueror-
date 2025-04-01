@@ -89,32 +89,88 @@ function initAudioPool() {
         // Controlla se il browser supporta Web Audio API
         if (!window.AudioContext && !window.webkitAudioContext) {
             console.warn('Audio API non supportata dal browser');
-            return;
+            createDummyAudio(name, config.instances);
+            continue;
         }
+        
+        let loadedAudio = false;
         
         for (let i = 0; i < config.instances; i++) {
             try {
-                const audio = new Audio(config.src);
+                const audio = new Audio();
+                
+                // Aggiungi listener per gestire errori di caricamento
+                audio.addEventListener('error', function(e) {
+                    console.warn(`Errore caricamento audio ${name}: ${e.target.error ? e.target.error.message : 'Errore sconosciuto'}`);
+                    // Inseriremo comunque un oggetto dummy per evitare errori nel gioco
+                    if (audioPool[name].length === 0) {
+                        createDummyAudio(name, 1);
+                    }
+                });
+                
                 audio.preload = 'auto';
-                audio.load();
+                audio.src = config.src;
                 
                 // Aggiungi al pool
                 audioPool[name].push({
                     element: audio,
                     inUse: false
                 });
+                
+                loadedAudio = true;
             } catch (e) {
-                console.warn(`Impossibile caricare l'audio ${name}:`, e);
+                console.warn(`Impossibile creare l'audio ${name}:`, e);
             }
         }
+        
+        // Se non è stato possibile caricare nessun audio, crea un dummy
+        if (!loadedAudio) {
+            createDummyAudio(name, config.instances);
+        }
+    }
+    
+    // Precarica comunque suoni critici, anche se non sono stati creati
+    ensureAudioExists('shoot');
+    ensureAudioExists('hit');
+    ensureAudioExists('explosion');
+}
+
+// Funzione per creare audio dummy che non riproduce suoni ma evita errori
+function createDummyAudio(name, instances) {
+    console.log(`Creazione audio dummy per ${name}`);
+    
+    // Se già esiste, non creare nuovi dummy
+    if (audioPool[name] && audioPool[name].length > 0) return;
+    
+    audioPool[name] = [];
+    
+    for (let i = 0; i < instances; i++) {
+        // Creiamo un oggetto con le stesse proprietà di un audio
+        const dummyAudio = {
+            play: function() { return Promise.resolve(); },
+            pause: function() {},
+            volume: 1.0,
+            currentTime: 0
+        };
+        
+        audioPool[name].push({
+            element: dummyAudio,
+            inUse: false
+        });
+    }
+}
+
+// Funzione per assicurarsi che un tipo di audio esista
+function ensureAudioExists(name) {
+    if (!audioPool[name] || audioPool[name].length === 0) {
+        createDummyAudio(name, 3);
     }
 }
 
 // Riproduci un suono dal pool
 function playSound(name, volume = 1.0) {
-    if (!audioPool[name] || audioPool[name].length === 0) {
-        return; // Suono non disponibile
-    }
+    // Assicurati che l'audio esista
+    ensureAudioExists(name);
     
     // Trova un'istanza audio non in uso
     let audioInstance = audioPool[name].find(a => !a.inUse);
@@ -122,16 +178,21 @@ function playSound(name, volume = 1.0) {
     // Se tutte le istanze sono in uso, usa la prima
     if (!audioInstance) {
         audioInstance = audioPool[name][0];
-        audioInstance.element.pause();
-        audioInstance.element.currentTime = 0;
+        try {
+            audioInstance.element.pause();
+            audioInstance.element.currentTime = 0;
+        } catch (e) {
+            console.warn('Errore nel riutilizzo audio:', e);
+        }
     }
     
     // Configura e riproduci
     audioInstance.inUse = true;
-    audioInstance.element.volume = volume;
     
-    // Riproduci con controllo degli errori
     try {
+        audioInstance.element.volume = volume;
+        
+        // Riproduci con controllo degli errori
         const playPromise = audioInstance.element.play();
         
         if (playPromise !== undefined) {
@@ -145,9 +206,16 @@ function playSound(name, volume = 1.0) {
         }
         
         // Segna come disponibile quando finisce
-        audioInstance.element.onended = () => {
-            audioInstance.inUse = false;
-        };
+        if (audioInstance.element.onended !== undefined) {
+            audioInstance.element.onended = () => {
+                audioInstance.inUse = false;
+            };
+        } else {
+            // Se non c'è onended, rilascia dopo 1 secondo
+            setTimeout(() => {
+                audioInstance.inUse = false;
+            }, 1000);
+        }
     } catch (e) {
         audioInstance.inUse = false;
         console.warn('Errore avvio riproduzione audio:', e);
@@ -554,42 +622,55 @@ function createPlanetsWithLOD(planets, geometries) {
         let bumpTexture = null;
         let hasBumpMap = false;
         
-        try {
-            switch(planetData.type) {
-                case 'rocky':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/mars.jpg');
-                    try {
-                        bumpTexture = new THREE.TextureLoader().load('public/textures/planets/mars-bump.jpg');
-                        hasBumpMap = true;
-                    } catch {
-                        console.warn('Bump texture not available for rocky planet');
-                    }
-                    break;
-                case 'gas':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/jupiter.jpg');
-                    break;
-                case 'desert':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/mercury.jpg');
-                    break;
-                case 'ice':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/ice.jpg');
-                    break;
-                case 'lava':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/lava.jpg');
-                    break;
-                case 'ocean':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/water.jpg');
-                    break;
-                case 'forest':
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/earth.jpg');
-                    break;
-                default:
-                    diffuseTexture = new THREE.TextureLoader().load('public/textures/planets/earth.jpg');
-            }
-        } catch (e) {
-            console.error('Error loading textures for planet type: ' + planetData.type, e);
-            // Fallback: pianeta colorato senza texture
-            diffuseTexture = null;
+        // Eliminiamo i try-catch per semplificare, ma gestiamo il controllo delle texture
+        switch(planetData.type) {
+            case 'rocky':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mars.jpg', 
+                    undefined, undefined, function() { console.warn('Errore caricamento texture mars.jpg'); });
+                // Carica il bump map solo se necessario e disponibile
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/mars-bump.jpg');
+                } catch {
+                    console.warn('Texture mars-bump.jpg non trovata, uso pianeta senza bump mapping');
+                }
+                break;
+            case 'gas':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/jupiter.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture jupiter.jpg'); });
+                break;
+            case 'desert':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/mercury.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture mercury.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/mercury-bump.jpg');
+                } catch {
+                    console.warn('Texture mercury-bump.jpg non trovata');
+                }
+                break;
+            case 'ice':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/neptune.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture neptune.jpg'); });
+                break;
+            case 'lava':
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/venus.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture venus.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/venus-bump.jpg');
+                } catch {
+                    console.warn('Texture venus-bump.jpg non trovata');
+                }
+                break;
+            case 'ocean':
+            case 'forest':
+            default:
+                diffuseTexture = new THREE.TextureLoader().load('public/textures/earth.jpg',
+                    undefined, undefined, function() { console.warn('Errore caricamento texture earth.jpg'); });
+                try {
+                    bumpTexture = new THREE.TextureLoader().load('public/textures/earth-bump.jpg');
+                } catch {
+                    console.warn('Texture earth-bump.jpg non trovata');
+                }
+                break;
         }
         
         // Crea materiale con o senza texture
@@ -1775,7 +1856,8 @@ function initializeIntegratedModules() {
     spaceCombat = new SpaceCombat(scene, camera, player);
     groundCombat = new GroundCombat(scene, camera, gameOptions.groundCombat);
     
-    // Il sistema di gestione centrale è stato rimosso perché non utilizzato
+    // Non è più necessario questo riferimento
+    // gameIntegration = new GameIntegration(gameOptions);
     
     // Collega moduli esistenti e nuovi moduli
     linkLegacyAndNewModules();
@@ -1828,112 +1910,91 @@ function updateStarFlares() {
 
 // --- Frustum Culling Ottimizzato ---
 function updateFrustumCulling() {
-    // Crea il frustum (volume di vista) della telecamera
-    const frustum = new THREE.Frustum();
-    const matrix = new THREE.Matrix4().multiplyMatrices(
-        camera.projectionMatrix,
-        camera.matrixWorldInverse
-    );
-    frustum.setFromProjectionMatrix(matrix);
-    
-    // Distanza massima oltre la quale gli oggetti sono sempre nascosti
-    const maxVisibleDistance = performanceMonitor.lowQualityMode ? 3000 : 8000;
-    
-    // Verifica pianeti
-    planetMeshes.forEach(planetMesh => {
-        if (!planetMesh.userData.planetData) return;
-        
-        const distance = planetMesh.position.distanceTo(camera.position);
-        const size = planetMesh.userData.planetData.size;
-        
-        // Rendi visibile solo se nel frustum e entro la distanza massima
-        // Per pianeti grandi aumentiamo la distanza di visibilità
-        const isVisible = (
-            distance < maxVisibleDistance * (size / 10 + 1) && 
-            (frustum.intersectsObject(planetMesh) || distance < size * 30)
+    try {
+        // Crea il frustum (volume di vista) della telecamera
+        const frustum = new THREE.Frustum();
+        const matrix = new THREE.Matrix4().multiplyMatrices(
+            camera.projectionMatrix,
+            camera.matrixWorldInverse
         );
+        frustum.setFromProjectionMatrix(matrix);
         
-        // Aggiorna visibilità
-        planetMesh.visible = isVisible;
+        // Distanza massima oltre la quale gli oggetti sono sempre nascosti
+        const maxVisibleDistance = performanceMonitor && performanceMonitor.lowQualityMode ? 3000 : 8000;
         
-        // Se il pianeta è lontano, disattiva le simulazioni fisiche
-        if (planetMesh.userData.physicsBody) {
-            planetMesh.userData.physicsBody.sleep = !isVisible;
-        }
-    });
-    
-    // Verifica stelle
-    starMeshes.forEach(starMesh => {
-        if (!starMesh.userData.systemData) return;
+        // Verifica pianeti
+        planetMeshes.forEach(planetMesh => {
+            if (!planetMesh || !planetMesh.position) return;
+            
+            const distance = planetMesh.position.distanceTo(camera.position);
+            const size = planetMesh.userData && planetMesh.userData.planetData ? 
+                         planetMesh.userData.planetData.size : 1;
+            
+            // Usa intersectsSphere invece di intersectsObject per evitare problemi con boundingSphere
+            const sphere = new THREE.Sphere(planetMesh.position, size * 1.5);
+            const isVisible = distance < maxVisibleDistance * (size / 10 + 1) && 
+                             (frustum.intersectsSphere(sphere) || distance < size * 30);
+            
+            // Aggiorna visibilità
+            planetMesh.visible = isVisible;
+        });
         
-        const distance = starMesh.position.distanceTo(camera.position);
-        const starSize = starMesh.userData.systemData.starSize;
-        
-        // Le stelle sono visibili a distanze maggiori
-        const maxStarVisibleDistance = maxVisibleDistance * 1.5;
-        const isVisible = (
-            distance < maxStarVisibleDistance * (starSize + 1) &&
-            (frustum.intersectsObject(starMesh) || distance < starSize * 100)
-        );
-        
-        starMesh.visible = isVisible;
-        
-        // Aggiorna anche le luci associate alle stelle
-        starMesh.children.forEach(child => {
-            if (child instanceof THREE.Light) {
-                child.visible = isVisible;
-                
-                // In low quality mode, riduci intensità delle luci
-                if (performanceMonitor.lowQualityMode && isVisible) {
-                    child.intensity = 0.7;
-                }
+        // Verifica stelle
+        starMeshes.forEach(starMesh => {
+            if (!starMesh || !starMesh.position) return;
+            
+            const distance = starMesh.position.distanceTo(camera.position);
+            const starSize = starMesh.userData && starMesh.userData.systemData ? 
+                            starMesh.userData.systemData.starSize : 1;
+            
+            // Le stelle sono visibili a distanze maggiori
+            const maxStarVisibleDistance = maxVisibleDistance * 1.5;
+            
+            // Usa intersectsSphere invece di intersectsObject
+            const sphere = new THREE.Sphere(starMesh.position, starSize);
+            const isVisible = distance < maxStarVisibleDistance * (starSize + 1) &&
+                             (frustum.intersectsSphere(sphere) || distance < starSize * 100);
+            
+            starMesh.visible = isVisible;
+            
+            // Aggiorna anche le luci associate alle stelle se disponibili
+            if (starMesh.children) {
+                starMesh.children.forEach(child => {
+                    if (child instanceof THREE.Light) {
+                        child.visible = isVisible;
+                        
+                        // In low quality mode, riduci intensità delle luci
+                        if (performanceMonitor && performanceMonitor.lowQualityMode && isVisible) {
+                            child.intensity = 0.7;
+                        }
+                    }
+                });
             }
         });
-    });
-    
-    // Verifica nemici attivi
-    activeEnemies.forEach(enemy => {
-        if (!enemy.mesh) return;
         
-        const distance = enemy.mesh.position.distanceTo(camera.position);
-        
-        // I nemici sono visibili solo a brevi distanze
-        const enemyVisibleDistance = performanceMonitor.lowQualityMode ? 300 : 500;
-        const isVisible = (
-            distance < enemyVisibleDistance && 
-            frustum.intersectsObject(enemy.mesh)
-        );
-        
-        enemy.mesh.visible = isVisible;
-        
-        // Gestisci l'attivazione/disattivazione dei nemici per risparmiare risorse
-        enemy.isActive = isVisible;
-    });
-    
-    // Verifica anche altri oggetti con molti poligoni
-    scene.traverse(object => {
-        // Ignora oggetti già processati
-        if (
-            planetMeshes.includes(object) || 
-            starMeshes.includes(object) || 
-            activeEnemies.some(e => e.mesh === object)
-        ) {
-            return;
-        }
-        
-        // Processa solo mesh con molti poligoni
-        if (
-            object.isMesh && 
-            object.geometry && 
-            object.geometry.attributes && 
-            object.geometry.attributes.position && 
-            object.geometry.attributes.position.count > 1000
-        ) {
-            const distance = object.position.distanceTo(camera.position);
-            const isVisible = distance < maxVisibleDistance && frustum.intersectsObject(object);
-            object.visible = isVisible;
-        }
-    });
+        // Verifica nemici attivi
+        activeEnemies.forEach(enemy => {
+            if (!enemy || !enemy.mesh || !enemy.mesh.position) return;
+            
+            const distance = enemy.mesh.position.distanceTo(camera.position);
+            
+            // I nemici sono visibili solo a brevi distanze
+            const enemyVisibleDistance = performanceMonitor && performanceMonitor.lowQualityMode ? 300 : 500;
+            
+            // Usa intersectsSphere invece di intersectsObject
+            const sphere = new THREE.Sphere(enemy.mesh.position, 10);
+            const isVisible = distance < enemyVisibleDistance && frustum.intersectsSphere(sphere);
+            
+            enemy.mesh.visible = isVisible;
+            
+            // Gestisci l'attivazione/disattivazione dei nemici per risparmiare risorse
+            if (typeof enemy.isActive !== 'undefined') {
+                enemy.isActive = isVisible;
+            }
+        });
+    } catch (error) {
+        console.warn("Errore in updateFrustumCulling:", error);
+    }
 }
 
 // --- Collision Optimization ---
