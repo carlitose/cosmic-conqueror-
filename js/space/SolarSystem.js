@@ -636,10 +636,13 @@ export class SolarSystem {
         for (let i = 0; i < starCount; i++) {
             const i3 = i * 3;
             
-            // Posizione in una sfera di raggio 1000
+            // Posizione in una sfera di raggio 1000 - modifica per distribuzione più uniforme
             const radius = 1000;
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos(2 * Math.random() - 1);
+            const theta = Math.random() * Math.PI * 2; // Angolo orizzontale (0-2π)
+            
+            // Utilizziamo una distribuzione più uniforme per l'angolo verticale 
+            // Per evitare la concentrazione di stelle in linee o pattern riconoscibili
+            const phi = Math.random() * Math.PI; // Angolo verticale (0-π) distribuito uniformemente
             
             positions[i3] = radius * Math.sin(phi) * Math.cos(theta);
             positions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);

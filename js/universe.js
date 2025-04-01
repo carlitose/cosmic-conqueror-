@@ -40,7 +40,11 @@ export class UniverseGenerator {
         // Posizione del sistema stellare nell'universo (distribuzione sferica)
         const radius = 1000 + (index * 500);
         const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
+        
+        // Modifica per distribuzione più uniforme
+        // Utilizziamo una distribuzione uniforme sull'angolo verticale per evitare la formazione 
+        // di linee o pattern riconoscibili di sistemi stellari
+        const phi = Math.random() * Math.PI; // Distribuzione uniforme invece di Math.acos(2 * Math.random() - 1)
         
         const x = radius * Math.sin(phi) * Math.cos(theta);
         const y = radius * Math.sin(phi) * Math.sin(theta) * 0.5; // Schiacciato sull'asse y per un universo più a forma di disco

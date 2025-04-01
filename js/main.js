@@ -740,10 +740,13 @@ function createStarfieldBackground() {
     for (let i = 0; i < starCount; i++) {
         const i3 = i * 3;
         
-        // Posizione stellare (sfera molto grande)
+        // Posizione stellare (sfera molto grande) - modifica per distribuzione più uniforme
         const radius = 2000 + Math.random() * 3000; // Ridotto raggio per concentrare le stelle
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
+        const theta = Math.random() * Math.PI * 2; // Angolo orizzontale (0-2π)
+        
+        // Utilizziamo una distribuzione più uniforme per l'angolo verticale
+        // Per evitare la concentrazione di stelle in linee o pattern riconoscibili
+        const phi = Math.random() * Math.PI; // Angolo verticale (0-π) distribuito uniformemente
         
         starPositions[i3] = radius * Math.sin(phi) * Math.cos(theta);
         starPositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
@@ -759,7 +762,7 @@ function createStarfieldBackground() {
     starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
     
     const starMaterial = new THREE.PointsMaterial({
-        size: 2,
+        size: 1.5 + Math.random(), // Aggiungo variazione nelle dimensioni
         vertexColors: true,
         sizeAttenuation: false, // Disabilita per migliorare performance
         transparent: true,
