@@ -89,6 +89,7 @@ export class Player {
             console.log("Player Update - Input:", 
                 {F: moveForward, B: moveBackward, L: moveLeft, R: moveRight, U: moveUp, D: moveDown});
             console.log("Camera Direction:", cameraDirection);
+            console.log("Is Flying Mode:", this.isFlying);
         }
         
         // Calcola velocità base (non moltiplicata per deltaTime ancora)
@@ -127,10 +128,20 @@ export class Player {
             
             // Controlli verticali dedicati (indipendenti dalla telecamera)
             // Manteniamo questi per dare più controllo al giocatore
+            const preY = this.velocity.y; // Save velocity.y before changes
+            
             if (moveUp) {
                 this.velocity.y += speedBase;
-            } else if (moveDown) {
+                console.log("VERTICAL MOVEMENT UP: Adding", speedBase, "to velocity.y");
+            }
+            if (moveDown) {
                 this.velocity.y -= speedBase;
+                console.log("VERTICAL MOVEMENT DOWN: Subtracting", speedBase, "from velocity.y");
+            }
+            
+            // Debug della velocità verticale se cambiata
+            if (preY !== this.velocity.y) {
+                console.log("Vertical velocity changed:", { before: preY, after: this.velocity.y });
             }
             
             // Debug della direzione e velocità in volo
@@ -138,6 +149,7 @@ export class Player {
                 console.log("FLYING MODE - Forward vector:", forward);
                 console.log("FLYING MODE - Right vector:", right);
                 console.log("FLYING MODE - Resulting velocity:", this.velocity);
+                console.log("FLYING MODE - Movement keys:", {up: moveUp, down: moveDown});
             }
         } else {
             // In modalità non-volo, forziamo il movimento orizzontale
@@ -174,15 +186,23 @@ export class Player {
         }
         
         // CORREZIONE: Moltiplica per deltaTime solo qui, dopo aver calcolato la direzione
+        const preMultiplyY = this.velocity.y; // Store Y velocity before deltaTime multiplication
         this.velocity.multiplyScalar(deltaTime);
         
         // Debug della velocità prima di applicarla
         if (window.performanceMonitor && window.performanceMonitor.frameCount % 60 === 0) {
             console.log("Velocità calcolata:", this.velocity, "Speed base:", speedBase, "DeltaTime:", deltaTime);
+            console.log("Y velocity: before deltaTime:", preMultiplyY, "after deltaTime:", this.velocity.y);
         }
         
         // Applica effettivamente il movimento
+        const prePosition = this.position.clone();
         this.position.add(this.velocity);
+        
+        // Debug log for Y position change
+        if (prePosition.y !== this.position.y) {
+            console.log("Y position changed:", { before: prePosition.y, after: this.position.y, change: this.position.y - prePosition.y });
+        }
         
         // Aggiorna mesh se esiste
         if (this.mesh) {

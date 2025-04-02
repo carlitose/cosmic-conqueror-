@@ -11,7 +11,7 @@ class PerformanceMonitor {
         this.frameCount = 0;
         this.lowQualityMode = false;
         this.targetFrameRate = PERFORMANCE.TARGET_FPS;
-        this.lastFrameTimestamp = 0;
+        this.lastFrameTimestamp = performance.now();
         
         // Riferimenti esterni che verranno inizializzati
         this.scene = null;
@@ -292,28 +292,97 @@ class PerformanceMonitor {
     }
     
     /**
+     * Helper method to sleep for a given time
+     * @param {number} ms - Milliseconds to sleep
+     * @returns {Promise} A promise that resolves after ms milliseconds
+     */
+    async sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Forces the frame rate to stay at or below the target
+     * Uses more aggressive techniques beyond just skipping frames
+     * @returns {Promise<boolean>} Promise that resolves to true when it's OK to render the next frame
+     */
+    async throttleFPS() {
+        // Skip throttling for unlimited framerates
+        if (this.targetFrameRate === 0 || this.targetFrameRate === Infinity) {
+            return true;
+        }
+        
+        const currentTime = performance.now();
+        const elapsed = currentTime - this.lastFrameTimestamp;
+        const frameDuration = 1000 / this.targetFrameRate;
+        
+        // If we're rendering too fast, actively wait until the next frame time
+        if (elapsed < frameDuration) {
+            const waitTime = frameDuration - elapsed;
+            if (this.frameCount % 60 === 0) {
+                console.log(`FPS Throttle - Waiting ${waitTime.toFixed(2)}ms to maintain ${this.targetFrameRate} FPS`);
+            }
+            
+            // Actually wait using setTimeout
+            await this.sleep(waitTime);
+            
+            // Update timestamp after waiting
+            this.lastFrameTimestamp = performance.now();
+            return true;
+        }
+        
+        // We've waited long enough, update timestamp and render
+        this.lastFrameTimestamp = currentTime;
+        return true;
+    }
+
+    /**
      * Verifica se è il momento di renderizzare un frame
      * @returns {boolean} true se il frame dovrebbe essere renderizzato
      */
     shouldRenderFrame() {
-        if (this.targetFrameRate === 0 || this.targetFrameRate === Infinity) { // Gestisci 0 o Infinity come illimitato
+        // Handle unlimited case
+        if (this.targetFrameRate === 0 || this.targetFrameRate === Infinity) {
             return true;
         }
+        
         const currentTime = performance.now();
-        const elapsed = currentTime - this.lastFrameTimestamp;
-        const frameDuration = 1000 / this.targetFrameRate;
-
-        // Log ogni 300 frames per debug
-        if (this.frameCount % 300 === 0) {
-            console.log(`FPS limiter: Target=${this.targetFrameRate}, elapsed=${elapsed.toFixed(2)}ms, frameDuration=${frameDuration.toFixed(2)}ms`);
-        }
-
-        if (elapsed >= frameDuration) {
-            // Usa solo currentTime per evitare problemi con lag elevato
+        
+        // Safety check - if lastFrameTimestamp is invalid, reset it
+        if (!this.lastFrameTimestamp || isNaN(this.lastFrameTimestamp)) {
+            console.warn("Invalid lastFrameTimestamp detected, resetting to current time");
             this.lastFrameTimestamp = currentTime;
             return true;
         }
-        return false;
+        
+        const elapsed = currentTime - this.lastFrameTimestamp;
+        const frameDuration = 1000 / this.targetFrameRate;
+        
+        // Enhanced debug logging
+        if (this.frameCount % 60 === 0) {
+            console.log(`FPS Limiter - Target: ${this.targetFrameRate}, elapsed: ${elapsed.toFixed(2)}ms, frameDuration: ${frameDuration.toFixed(2)}ms, shouldRender: ${elapsed >= frameDuration}`);
+        }
+        
+        // Check if enough time has passed since the last frame
+        if (elapsed >= frameDuration) {
+            // Important: update the timestamp based on the current time
+            // This prevents stuttering by ensuring we're not trying to "catch up" to an ideal frame time
+            this.lastFrameTimestamp = currentTime;
+            
+            // Additionally, if we're significantly behind (e.g., after tab switch), 
+            // let's avoid massive catch-up and just treat this as a reset point
+            if (elapsed > frameDuration * 3) {
+                if (this.frameCount % 60 === 0) {
+                    console.log(`FPS Limiter - Detected large time gap (${elapsed.toFixed(2)}ms), resetting frame timing`);
+                }
+            }
+            
+            return true;
+        } else {
+            // If we need to skip this frame (e.g. we're trying to render too quickly)
+            // The browser will still call requestAnimationFrame at about every 16.7ms (60fps)
+            // or faster on high refresh displays, so we need to skip frames to achieve our target
+            return false;
+        }
     }
     
     /**
@@ -321,20 +390,31 @@ class PerformanceMonitor {
      * @param {number} fps - Target frame rate
      */
     setTargetFPS(fps) {
+        // Ensure fps is a number
+        const newFps = Number(fps);
+        if (isNaN(newFps)) {
+            console.warn(`Invalid FPS value received: ${fps}. Using previous: ${this.targetFrameRate}`);
+            return;
+        }
+        
         // Limita ad un minimo di 15 FPS o nessun limite (0)
-        if (fps !== 0 && fps < 15) fps = 15;
+        let finalFps = newFps;
+        if (finalFps !== 0 && finalFps < 15) finalFps = 15;
         
         // Se il valore non è cambiato, non fare nulla
-        if (this.targetFrameRate === fps) return;
+        if (this.targetFrameRate === finalFps) return;
         
-        this.targetFrameRate = fps;
-        console.log(`Target frame rate changed to ${fps === 0 ? 'unlimited' : fps + ' FPS'}`);
+        this.targetFrameRate = finalFps;
+        console.log(`Target frame rate changed to ${finalFps === 0 ? 'unlimited' : finalFps + ' FPS'}`);
+        
+        // Reset timestamp to avoid a potentially long first frame after change
+        this.lastFrameTimestamp = performance.now();
         
         // Aggiorna l'UI se c'è un select element con id fps-select
         const fpsSelector = document.getElementById('fps-select');
-        if (fpsSelector && fpsSelector.value !== String(fps)) {
-            console.log("Updating FPS select UI to", fps);
-            fpsSelector.value = String(fps);
+        if (fpsSelector && fpsSelector.value !== String(finalFps)) {
+            console.log("Updating FPS select UI to", finalFps);
+            fpsSelector.value = String(finalFps);
         }
     }
 }

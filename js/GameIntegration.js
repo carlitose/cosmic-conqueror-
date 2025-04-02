@@ -250,7 +250,12 @@ export class GameIntegration {
         this.state.isGameOver = false;
         performanceMonitor.lastFrameTime = performance.now();
         performanceMonitor.lastFrameTimestamp = performance.now();
-        this.animate();
+        
+        // Use the more effective FPS limiting implementation
+        this.animateWithFPSLimit();
+        
+        // Keep the original method as a fallback
+        // this.animate();
     }
 
     /** Ferma il ciclo di gioco */
@@ -262,18 +267,94 @@ export class GameIntegration {
         }
     }
 
-    /** Ciclo principale di animazione */
+    /**
+     * Implementazione moderna e più efficace dell'FPS limiter
+     * @private
+     */
+    async animateWithFPSLimit() {
+        // Solo per debug, contiamo quanti frame sono effettivamente renderizzati
+        let renderedFrames = 0;
+        let totalFrames = 0;
+        
+        // Funzione interna che gestisce il loop di animazione
+        const frameLoop = async () => {
+            this.animationFrameId = requestAnimationFrame(frameLoop);
+            totalFrames++;
+            
+            // Aggiorna i contatori di performance
+            performanceMonitor.update();
+            
+            // Avvia stats se in debug mode
+            if (this.options.debug && this.stats) this.stats.begin();
+            
+            try {
+                // Usa il throttling attivo per limitare gli FPS
+                // Questo è un approccio più robusto rispetto a shouldRenderFrame
+                const shouldRender = await performanceMonitor.throttleFPS();
+                
+                // Se dobbiamo renderizzare, esegui tutto il codice di aggiornamento e rendering
+                if (shouldRender) {
+                    renderedFrames++;
+                    if (totalFrames % 60 === 0) {
+                        console.log(`FPS Efficiency: Rendered ${renderedFrames}/${totalFrames} frames (${(renderedFrames/totalFrames*100).toFixed(1)}%)`);
+                        renderedFrames = 0;
+                        totalFrames = 0;
+                    }
+                    
+                    const deltaTime = Math.min(this.clock.getDelta(), 0.1);
+                    this.state.gameTime += deltaTime;
+                    
+                    const isLocked = this.pointerLockControls?.isLocked ?? false;
+                    if (!this.state.isPaused && !this.state.isGameOver && this.player && isLocked) {
+                        this.update(deltaTime);
+                    }
+                    
+                    // Renderizza la scena
+                    this.render();
+                }
+            } catch (error) {
+                console.error("Error in animation loop:", error);
+                this.handleGameOver();
+            }
+            
+            // Completa stats se in debug mode
+            if (this.options.debug && this.stats) this.stats.end();
+        };
+        
+        // Avvia il loop
+        frameLoop();
+    }
+
+    /** Ciclo principale di animazione (implementazione classica) */
     animate() {
+        // First request the next animation frame to maintain a smooth loop
         this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
 
+        // Update performance counters
         performanceMonitor.update();
+        
+        // Debug stats
         if (this.options.debug && this.stats) this.stats.begin();
 
-        if (!performanceMonitor.shouldRenderFrame()) {
-            if (this.options.debug && this.stats) this.stats.end();
-            return;
+        // Log FPS limiter status every 120 frames
+        if (window.performanceMonitor && window.performanceMonitor.frameCount % 120 === 0) {
+            console.log("Before FPS check - Current FPS:", performanceMonitor.getAverageFPS());
         }
 
+        // Check if we should skip this frame based on FPS target
+        const shouldRender = performanceMonitor.shouldRenderFrame();
+        
+        // Log when frames are skipped
+        if (!shouldRender) {
+            if (window.performanceMonitor && window.performanceMonitor.frameCount % 120 === 0) {
+                console.log("FRAME SKIPPED - Target FPS:", performanceMonitor.targetFrameRate);
+            }
+            
+            if (this.options.debug && this.stats) this.stats.end();
+            return; // Skip the rest of the frame
+        }
+
+        // If we get here, we should render this frame
         const deltaTime = Math.min(this.clock.getDelta(), 0.1);
         this.state.gameTime += deltaTime;
 
